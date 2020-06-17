@@ -1,3 +1,5 @@
+import numpy as np
+
 def makeeventlist(main_event_positions,side_event_positions,data,event_width=20, min_width=2):
     """
     Generate array of events that might be EODs of a pulse-type fish, using the location of peaks and troughs,

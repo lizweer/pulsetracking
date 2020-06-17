@@ -21,6 +21,8 @@ import re
 
 import copy
 
+import argparse
+
 
 class pd(object):
     """
@@ -106,7 +108,7 @@ class cluster_object(object):
         self.f_spatial = np.ones((track_length, grid_shape[0]*grid_shape[1]))*99
         self.f_temporal = np.ones((track_length, temporal_featnum))*99
         self.f_ts = np.zeros(track_length)
-        self.f_pc = np.zeros(track_length)
+        self.f_connecting_clusters = np.zeros(track_length)
 
 
         # storage buffers for EOD instances (time, location)
@@ -116,7 +118,7 @@ class cluster_object(object):
         # storage buffers for things you want to track (debugging)
         self.debug = {v:[] for v in debug_vals}
     
-    def update(self,t,spatial_feature,temp_feature,pc,debug_dict={}):
+    def update(self,t,spatial_feature,temp_feature,connecting_cluster,debug_dict={}):
         """
         Update cluster object with the current EOD.
 
@@ -139,7 +141,7 @@ class cluster_object(object):
         self.f_spatial[int(self.peak_count%self.track_length)] = spatial_feature 
         self.f_temporal[int(self.peak_count%self.track_length)] = temp_feature
         self.f_ts[int(self.peak_count%self.track_length)] = t
-        self.f_pc[int(self.peak_count%self.track_length)] = pc
+        self.f_connecting_clusters[int(self.peak_count%self.track_length)] = connecting_cluster
 
         for key in debug_dict:
             if key in self.debug:
@@ -200,7 +202,7 @@ class cluster_object(object):
         self.f_spatial[idxs] = np.ones(self.f_spatial[idxs].shape)*99
         self.f_temporal[idxs] = np.ones(self.f_temporal[idxs].shape)*99
         self.f_ts[idxs] = np.ones(self.f_ts[idxs].shape)*-99
-        self.f_pc[idxs] = 0
+        self.f_connecting_clusters[idxs] = 0
 
         #for key in self.debug:
         #    self.debug[key].pop(idxs)
@@ -311,16 +313,39 @@ def load_channels(master_filepath,slave_filepath,starttime,endtime):
     print('data loaded')
     return x,data,dt
 
-def extract_eod_times(data,thresh,peakwidth):
+def extract_eod_times(data, thresh, peakwidth, samplerate, win_size = 0.0005, n_stds = 1000, threshold_factor=6):
+
     print('extracting times')
     all_peaks = []
     channels = []
 
+
+
     for i in range(data.shape[1]):
         y = data[:,i]
+
+        '''
+        # standard deviation of data in small snippets:
+        win_size_indices = int(win_size * samplerate)
+        if win_size_indices < 10:
+            win_size_indices = 10
+        step = len(data)//n_stds
+        if step < win_size_indices//2:
+            step = win_size_indices//2
+        stds = [np.std(y[i:i+win_size_indices], ddof=1)
+                for i in range(0, len(y)-win_size_indices, step)]
+
+        
+        threshold = np.median(stds) * threshold_factor
+        '''
         pk, tr = ed.detect_peaks(y, thresh)
 
+
         if len(pk)>1:
+            
+            #peaks = pth.makeeventlist(pk, tr, y, peakwidth*samplerate, 2) 
+            #peaks, _, _, _ = pth.discard_connecting_eods(peaks[0], peaks[1], peaks[3], peaks[4])
+            
             peaks = pth.makeeventlist(pk,tr,y,peakwidth)
             peakindices, _, _ = pth.discardnearbyevents(peaks[0],peaks[1],peakwidth)
             peaks = np.transpose(peaks[0,peakindices])
@@ -425,7 +450,7 @@ def single_eod(pattern, grid_shape=(4,8)):
 
 def detect_artefacts(eods,dt,threshold=8000, cutoff=0.75):
 
-    xf = np.linspace(0.0, 1.0/(2.0*dt), len(eods)/2)
+    xf = np.linspace(0.0, 1.0/(2.0*dt), int(len(eods)/2))
     
     fft = np.abs(np.fft.fft(eods.T))[:,:len(xf)]    
     
@@ -626,7 +651,7 @@ def argmax_2d(a):
     return np.unravel_index(np.argmax(a, axis=None), a.shape)
 
 def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save_buffer=60,grid_shape=(4,8), 
-    starttime=0, endtime=10000, peak_detection_threshold=0.001, peakwidth=0.0005, track_length=10, 
+    starttime=0, endtime=60*60*48, peak_detection_threshold=0.001, peakwidth=0.0005, track_length=10, 
     spatial_feature_error_threshold=0.25, temporal_feature_error_threshold=0.1, 
     track_length_t = 10, debug_vars=[], save_artefacts=False, save_wavefish=False,mode=''):
     '''
@@ -690,10 +715,10 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
     # check if path for previous path exists, if it does, use those clusters and empty them.
     print("looking for this:")
-    print('%sresults_%s_%i.pkl'%(save_path,mode,int(starttime/60-1)))
+    print('%s%i.pkl'%(save_path,int(starttime/60-1)))
     try: 
-        co = pickle.load(open('%sresults_%s_%i.pkl'%(save_path,mode,int(starttime/60-1)),'rb'))
-        print('loaded old clusters from %sresults_%s_%i.pkl'%(save_path,mode,int(starttime/60-1)))
+        co = pickle.load(open('%s%i.pkl'%(save_path,int(starttime/60-1)),'rb'))
+        print('loaded old clusters from %s%i.pkl'%(save_path,int(starttime/60-1)))
         all_clusters = co.clusters
 
         print('loaded clusters::')
@@ -742,7 +767,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         
         # load data and find potential eod times
         x, data, dt = load_channels(master_filepath,slave_filepath,starttime,endtime)
-        idx_arr, elec_masks = extract_eod_times(data,peak_detection_threshold,peakwidth/dt)
+        idx_arr, elec_masks = extract_eod_times(data,peak_detection_threshold,peakwidth/dt,1/dt)
         
         # extract eel times
         cur_eel = extract_eel_times(data)
@@ -769,6 +794,9 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
             if np.sum(artefact_mask*wavefish_mask*elec_mask) > 0:
 
                 print('an EOD!')
+
+                print('all clusters:')
+                print(all_clusters.keys())
 
                 # get indices of clusters that are relevant for now. 
                 # e.g. no idle clusters, no clusters that have a recent peak assigned
@@ -848,11 +876,14 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                         if (key =='potential_eod') and (len(ac_keys) == 2) and (single_eod(spatial_pattern)):
                             print('single EOD:')
                             print(single_eod(spatial_pattern))
-                            pc = ac_keys[1]
+                            connecting_cluster = ac_keys[1]
                         else:
-                            pc = 0
+                            connecting_cluster = 0
 
-                        all_clusters[key].update(p_idx*dt+starttime,c_sf,c_tf,pc,debug_dict=dd)
+                        if key != 'potential_eod' or len(ac_keys)==1:
+                            all_clusters[key].update(p_idx*dt+starttime,c_sf,c_tf,connecting_cluster,debug_dict=dd)
+                    
+
 
                     if 'potential_eod' in ac_keys:
 
@@ -872,13 +903,13 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                 g_idxs = np.where(c[i]==np.max(c))[0]
 
                                 # do any of these connect to existing clusters?? 
-                                if (np.count_nonzero(all_clusters['potential_eod'].f_pc)>0) and (len(np.unique(all_clusters['potential_eod'].f_pc))==2):
+                                if False: #(np.count_nonzero(all_clusters['potential_eod'].f_connecting_clusters)>0) and (len(np.unique(all_clusters['potential_eod'].f_connecting_clusters))==2):
                                     print('appending to existing cluster')
-                                    print(all_clusters['potential_eod'].f_pc)
+                                    print(all_clusters['potential_eod'].f_connecting_clusters)
                                     
-                                    conc = str(int(np.max(all_clusters['potential_eod'].f_pc)))
+                                    conc = str(int(np.max(all_clusters['potential_eod'].f_connecting_clusters)))
 
-                                    add = np.where(all_clusters['potential_eod'].f_pc==0)[0]
+                                    add = np.where(all_clusters['potential_eod'].f_connecting_clusters==0)[0]
                                     new_ts = all_clusters['potential_eod'].f_ts[add]
 
                                     # revert the cluster to the newest timepoint.
@@ -906,6 +937,11 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                     # distances = np.linalg.norm()
 
                                     # also I could check again here if I can connect to any of the existing clusters.
+                                    
+                                    # sth like, check if any clusters are idle? but what if this is a fast EOD it cannot connect to a slow one.
+                                    # either use another threshold or say, c>-10 and dt >1 second.
+                                    # so the tracking length should be bigger.
+                                    ############################################################################################################
 
                                     # if there are at least 10 close clusters, make it a new cluster.
                                     new_cluster = cluster_object(str(maxlabel+1),track_length,debug_vals=debug_vars)
@@ -974,11 +1010,11 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
         if endtime == endtimes[-1]:
             print('saving to: ')
-            print('%sresults_%s_%i.pkl'%(save_path,mode,int(endtime/60)-1))
-            pickle.dump(pd(endtime-60,endtime,dt,all_clusters,master_filepath,slave_filepath,eel),open('%sresults_%s_%i.pkl'%(save_path,mode,int(endtime/60)-1),'wb'))
+            print('%s%i.pkl'%(save_path,int(endtime/60)-1))
+            pickle.dump(pd(endtime-60,endtime,dt,all_clusters,master_filepath,slave_filepath,eel),open('%s%i.pkl'%(save_path,int(endtime/60)-1),'wb'))
         elif endtime%60 == 0:
-            print('writing data to: %sresults_%s_%i.pkl'%(save_path,mode,int(endtime/60)-1))
-            pickle.dump(pd(endtime-60,endtime,dt,all_clusters,master_filepath,slave_filepath,eel),open('%sresults_%s_%i.pkl'%(save_path,mode,int(endtime/60)-1),'wb'))
+            print('writing data to: %s%i.pkl'%(save_path,int(endtime/60)-1))
+            pickle.dump(pd(endtime-60,endtime,dt,all_clusters,master_filepath,slave_filepath,eel),open('%s%i.pkl'%(save_path,int(endtime/60)-1),'wb'))
             print('emptying clusters')
             
             for label, cluster in all_clusters.items():
@@ -997,3 +1033,37 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
             all_clusters = all_clusters_buffer
 
     return 0
+
+
+if __name__ == '__main__':
+    
+    # command line arguments:
+    parser = argparse.ArgumentParser(description='Analyze EOD waveforms of weakly electric fish.')    
+    parser.add_argument('master_files', nargs=1, default='', type=str,
+                        help='name of a file with time series data of an EOD recording')
+    parser.add_argument('slave_files', nargs=1, default='', type=str,
+                        help='name of a file with time series data of an EOD recording')
+    args = parser.parse_args()
+
+    print(args.master_files)
+
+    for master_file,slave_file in zip(args.master_files,args.slave_files):
+        if master_file[-1] == '/':
+            save_folder = 'results_' + master_file.split('/')[-2] + '/'
+        else:
+            save_folder = 'results_' + master_file.split('/')[-1] + '/'
+
+        starttime = 0
+        
+        if os.path.exists(save_folder):
+            # check the last file that was saved and continue analysis there.
+            starttime = len([name for name in os.listdir(save_folder) if '.pkl' in name])
+
+        else:
+            # make dir.
+            os.mkdir(save_folder)
+
+
+        # maybe first check the last file that was output to the save folder and continue analysis from there?
+        # 
+        get_clusters(master_file,slave_file,save_folder,starttime=starttime*60,debug_vars=['c_tf','c_sf','c_eod'])
