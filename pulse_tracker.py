@@ -1049,9 +1049,9 @@ if __name__ == '__main__':
 
     for master_file,slave_file in zip(args.master_files,args.slave_files):
         if master_file[-1] == '/':
-            save_folder = 'results_' + master_file.split('/')[-2] + '/'
+            save_folder = 'data/results/' + master_file.split('/')[-2] + '/'
         else:
-            save_folder = 'results_' + master_file.split('/')[-1] + '/'
+            save_folder = 'data/results/' + master_file.split('/')[-1] + '/'
 
         starttime = 0
         
