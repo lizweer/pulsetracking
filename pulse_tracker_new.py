@@ -17,12 +17,19 @@ from scipy.ndimage.measurements import center_of_mass
 
 from scipy.spatial.distance import cdist
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+
 import pickle
 import re
 
 import copy
 
 import argparse
+
+
+# save all eods. then compare across the same channel.
 
 
 class pd(object):
@@ -107,7 +114,7 @@ class cluster_object(object):
 
         # storage buffers for features. Each feature is only tracked for track_length.        
         self.f_spatial = np.ones((track_length, grid_shape[0]*grid_shape[1]))*99
-        self.f_temporal = np.ones((track_length, temporal_featnum,2))*99
+        self.f_temporal = np.ones((track_length, 2, 32, temporal_featnum))*99
         self.f_ts = np.zeros(track_length)
         self.f_connecting_clusters = np.zeros(track_length)
 
@@ -326,12 +333,11 @@ def extract_eod_times(data, thresh, peakwidth, samplerate, win_size = 0.0005, n_
     eod_hights = []
     eod_widths = []
 
-
-
     for i in range(data.shape[1]):
         y = data[:,i]
         print('start func')
         x_peak, x_trough, eod_hight, eod_width, int_samplerate, int_data, _ = lp.extract_eod_times(y,samplerate,cutwidth=0.01)
+        plt.show()
         print('end func')
         if len(all_int_data)>0:
             all_int_data = np.vstack([all_int_data,int_data])
@@ -486,8 +492,12 @@ def plot_snippet(eods,x,p,t,c):
         plt.subplot(4,8,i+1)
         plt.plot(x,eods[i])
         if i in c:
-            plt.plot(p[c==i],eods[np.where(c==i)[0][0]],'x')
-            plt.plot(t[c==i],eods[np.where(c==i)[0][0]],'x')
+            try:
+                plt.plot(p[c==i],eods[i,(p[c==i]-x[0]).astype('int')],'x')
+                plt.plot(t[c==i],eods[i,(t[c==i]-x[0]).astype('int')],'x')
+            except:
+                plt.plot(x,eods[i],c='r')
+                pass
         plt.ylim([np.min(eods),np.max(eods)])
         plt.axis('off')
 
@@ -516,8 +526,9 @@ def get_relevant_cluster_keys(all_clusters,c_time,track_length_t,peakwidth):
     return np.array(relevant_keys), recent_spike
 
 def get_cluster_candidates(clusters, cluster_keys, spatial_pattern, spatial_feature_error_threshold,noise_bound=1):
-    
-    if len(cluster_keys) > 0:
+    print('cluster keys')
+    print(cluster_keys)
+    if len(cluster_keys[cluster_keys!='potential_eod']) > 0:
         # get spatial features from clusters
         #c_feats = np.array([])
 
@@ -532,29 +543,32 @@ def get_cluster_candidates(clusters, cluster_keys, spatial_pattern, spatial_feat
 
         cluster_candidate_keys = cluster_keys[np.count_nonzero(c_error<spatial_feature_error_threshold,axis=1)>=noise_bound]
 
-
+        '''
         # get differences between current spatial pattern and saved spatial patterns for clusters
-        #c_diff = np.linalg.norm((c_feats - spatial_pattern)**2, axis=2)
-        #amin = np.argmin(c_diff,axis=1)
+        c_diff = np.linalg.norm((c_feats - spatial_pattern)**2, axis=2)
+        amin = np.argmin(c_diff,axis=1)
 
 
         # for each cluster, use one representative spatial feature for linear regression
-        #x_glm = np.stack([c_feats[i,amin[i]] for i in range(c_feats.shape[0])])
+        x_glm = np.stack([c_feats[i,amin[i]] for i in range(c_feats.shape[0])])
+
+        print(x_glm.shape)
 
         # do a linear regression on these spatial patterns
-        #reg = lsq_linear(np.transpose(x_glm),spatial_pattern,(0,1.5))
+        reg = lsq_linear(np.transpose(x_glm),spatial_pattern,(0,1.5))
 
         # what if I do linear regression on all patterns and use the sum of the ones that are used as result??
+        c_error = np.abs(reg.x - 1)
 
-        #c_error = np.abs(reg.x - 1)
+        print(c_error)
 
         # select candidate clusters based on linear regression error.
-        #cluster_candidate_keys = cluster_keys[c_error < spatial_feature_error_threshold]
+        cluster_candidate_keys = cluster_keys[c_error < spatial_feature_error_threshold]
 
 
         # maybe unneccesary now I dont use this anymore.
-        # cc_spatial_features = get_spatial_features(cluster_candidate_keys,spatial_pattern,reg.x[c_error < spatial_feature_error_threshold],x_glm[c_error < spatial_feature_error_threshold])
-
+        #cc_spatial_features = get_spatial_features(cluster_candidate_keys,spatial_pattern,reg.x[c_error < spatial_feature_error_threshold],x_glm[c_error < spatial_feature_error_threshold])
+        '''
         return cluster_candidate_keys, np.min(c_error,axis=1)
     else:
         return [],[]
@@ -574,14 +588,14 @@ def get_spatial_features(cc_keys,spatial_pattern, glm_coef,glm_x):
 
     return cc_spatial_features
 
-def ask_the_user(spatial_pattern,eods,time):
+def ask_the_user(spatial_pattern,eod,time):
 # ask for user input.
     manual_input = True
     
     plt.subplot(121)
     plt.imshow(spatial_pattern.reshape(4,8))
     plt.subplot(122)
-    plt.plot(eods[:,np.argmax(spatial_pattern)])
+    plt.plot(eod)
     plt.show()
     answer = ''
 
@@ -592,7 +606,14 @@ def ask_the_user(spatial_pattern,eods,time):
 
     return answer, manual_input
 
-def assess_candidates(clusters,cc_keys,data,peaks,throughs,temporal_feature_error_threshold,dt,noise_bound=1):
+#def plot_cluster_features()
+#    f, ax = plt.subplots(2,10)
+
+#    for i in range(10):
+#        ax[].plot()
+
+
+def assess_candidates(clusters,cc_keys,maxchan,data,peaks,throughs,channels,temporal_feature_error_threshold,dt,noise_bound=1):
     
     ac_keys = []
     min_dist_norm = [0]
@@ -600,25 +621,50 @@ def assess_candidates(clusters,cc_keys,data,peaks,throughs,temporal_feature_erro
     
     # get temp features for the right channels
     for cc_key in cc_keys:
-        # get channels of interest
-        coi = np.argmax(clusters[cc_key].f_spatial,axis=1)
-        # get temp feat of current eods for coi
-        cur_feat = get_temp_feat(eods,coi,dt)
 
-        # get difference
-        f_dist = np.linalg.norm(clusters[cc_key].f_temporal - cur_feat.transpose(1,0,2),axis=2)
-        f_dist_norm = f_dist/np.linalg.norm(clusters[cc_key].f_temporal)
+        compare_features = clusters[cc_key].f_temporal[:,:,maxchan,:]
+        width = compare_features.shape[-1]
 
-        # change the differences that were computed for coi where eod==0
-        f_dist_norm[:,np.count_nonzero(eods[:,coi],axis=0)== 0] = 99
+        cfeats = np.vstack([data[maxchan, int(peaks[channels==maxchan]-width/2):int(peaks[channels==maxchan]+width/2)],data[maxchan, int(throughs[channels==maxchan]-width/2):int(throughs[channels==maxchan]+width/2)]])
+        
+        print(compare_features.shape)
+        print(cfeats.shape)
+        compare_features = np.concatenate((compare_features,cfeats.reshape(-1,2,300)))
 
-        # as there are three for each, use min errors
-        min_dist = np.min(f_dist,axis=0)
-        min_dist_norm = np.min(f_dist_norm,axis=0)
+        # now do pca? on what? what if I only have one channel to connect to?
+        # for now just take the distance which should somehow be normalized.
+        # subtract the slope and normalize the snippets
+        compare_features[:,0,:], sr = lp.subtract_slope(compare_features[:,0,:])
+        compare_features[:,1,:], sr = lp.subtract_slope(compare_features[:,1,:])
 
-        if np.count_nonzero(min_dist_norm<temporal_feature_error_threshold) >= noise_bound:
+        compare_features[:,0,:] = StandardScaler().fit_transform(compare_features[:,0,:].T).T
+        compare_features[:,1,:] = StandardScaler().fit_transform(compare_features[:,1,:].T).T
+
+        # scale so that the absolute integral = 1.
+        compare_features[:,0,:] = (compare_features[:,0,:].T/np.sum(np.abs(compare_features[:,0,:]),axis=1)).T
+        compare_features[:,1,:] = (compare_features[:,1,:].T/np.sum(np.abs(compare_features[:,1,:]),axis=1)).T
+        
+        # now do PCA?
+        #plt.figure()
+        #plt.plot(compare_features[:,0,:].T)
+        #plt.show()
+        #plt.plot(compare_features[:,1,:].T)
+        #plt.show()
+
+        
+        fsum = np.sum(compare_features[:,0,:],axis=1)
+
+        pcs = PCA(2).fit(compare_features[~np.isnan(fsum),0,:]).transform(compare_features[~np.isnan(fsum),0,:])
+        p_diff = np.linalg.norm(np.abs(pcs[:-1]-pcs[-1]),axis=1)
+
+        pcs = PCA(2).fit(compare_features[~np.isnan(fsum),1,:]).transform(compare_features[~np.isnan(fsum),1,:])
+        t_diff = np.linalg.norm(np.abs(pcs[:-1]-pcs[-1]),axis=1)
+
+        error = np.min(np.vstack([p_diff,t_diff]),axis=1)
+
+        if np.count_nonzero(error<temporal_feature_error_threshold) >= noise_bound:
             ac_keys.append(cc_key)
-        err.append(np.min(min_dist_norm))
+        err.append(np.min(error))
 
     return np.array(ac_keys), err
 
@@ -637,8 +683,12 @@ def argmax_2d(a):
 
 def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save_buffer=60,grid_shape=(4,8), 
     starttime=0, endtime=60*60*48, peak_detection_threshold=0.001, peakwidth=0.0005, track_length=10, 
-    spatial_feature_error_threshold=0.25, temporal_feature_error_threshold=0.1, 
+    spatial_feature_error_threshold=0.25, temporal_feature_error_threshold=0.05, 
     track_length_t = 10, debug_vars=[], save_artefacts=False, save_wavefish=False,mode=''):
+    
+    # make the cutwidth fixed based on the eod of the fish of interest.
+    
+    
     '''
     Get EOD clusters
 
@@ -697,6 +747,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
     
     maxlabel = 0
     dd={}
+    f_width = 300
 
     # check if path for previous path exists, if it does, use those clusters and empty them.
     print("looking for this:")
@@ -737,7 +788,10 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         all_clusters = {}
 
         eel = cluster_object('eel',track_length)
-        potential_eod = cluster_object('potential_eod',track_length)
+
+        potential_eod = cluster_object(str(maxlabel+1),track_length,temporal_featnum=f_width,debug_vals=debug_vars)
+
+        #potential_eod = cluster_object('potential_eod',track_length)
         potential_eod.debug = {v:[] for v in debug_vars}
 
         all_clusters['potential_eod'] = potential_eod
@@ -754,6 +808,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         x, data, dt = load_channels(master_filepath,slave_filepath,starttime,endtime)
         x_peaks, x_troughs, eod_hights, eod_widths, channels, data, samplerate = extract_eod_times(data,peak_detection_threshold,peakwidth/dt,1/dt)
         dt = 1/samplerate
+
         # extract eel times
         # cur_eel = extract_eel_times(data)
 
@@ -767,25 +822,44 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         print(eod_widths.shape)
         width_labels = lp.BGM(eod_widths,merge_threshold_width,n_gaus_width,verbose=1)
 
-        for w in np.unique(width_labels):
-            plt.hist(eod_widths[width_labels==w])
-            print(w)
-            print(np.median(eod_widths[width_labels==w]))
-        plt.show()
+        #for w in np.unique(width_labels):
+        #    plt.hist(eod_widths[width_labels==w])
+        #    print(w)
+        #    print(np.median(eod_widths[width_labels==w]))
+        #plt.show()
 
         # go through each peak
         for w in np.unique(width_labels):
+            print('width LABEL = %i'%w)
             wx_peaks = x_peaks[width_labels==w]
             wx_troughs = x_troughs[width_labels==w]
             weod_hights = eod_hights[width_labels==w]
             weod_widths = eod_widths[width_labels==w]
             wchannels = channels[width_labels==w]
 
+            if np.median(weod_widths)>f_width/3:
+                continue
+
+            #for i, d in enumerate(data):
+            #    plt.plot(d)
+            #    plt.plot(wx_peaks[wchannels==i],d[wx_peaks[wchannels==i].astype('int')],'x')
+            #    plt.plot(wx_troughs[wchannels==i],d[wx_troughs[wchannels==i].astype('int')],'x')
+            #    plt.show()
+
             skip = 0
 
+            print((wx_peaks+wx_troughs)/2)
+            print(weod_widths)
+            print(wx_peaks)
+            print(wx_troughs)
+
             for i_peak, (eod_time, eod_width, eod_peak, eod_trough) in enumerate(zip((wx_peaks+wx_troughs)/2, weod_widths, wx_peaks, wx_troughs)): 
+
                 if skip > 0:
+                    skip = skip-1
                     continue
+                
+                print(i_peak)
                 h_pattern = np.zeros(32)
                 w_pattern = np.zeros(32)
 
@@ -800,34 +874,24 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
                 ch = weod_hights[sl]
                 cw = weod_widths[sl]
+                
 
-                eods = data[:,max(int(eod_peak-eod_width*3),0):min(int(eod_peak+eod_width*3),len(data[0]))]
+                if np.min(ch)/np.max(ch) > 0.25:
+                    continue
+                    
+                h_pattern[cc.astype('int')] = ch
+                w_pattern[cc.astype('int')] = cw
 
-                print('H ratio')
-                print(np.min(ch)/np.max(ch))
-                if np.min(ch)/np.max(ch) < 0.25:
-                    h_pattern[cc.astype('int')] = ch
-                    w_pattern[cc.astype('int')] = cw
+                maxchan = np.argmax(h_pattern)
+                width = f_width/2
 
-                    print(eod_peak)
-                    print(max(int(eod_peak-eod_width*3),0))
-                    print(min(int(eod_peak+eod_width*3),len(data[0])))
-                    print(data.shape)
+                try:
+                    p_eods = data[:, int(cp[cc==maxchan]-width):int(cp[cc==maxchan]+width)]
+                    t_eods = data[:, int(ct[cc==maxchan]-width):int(ct[cc==maxchan]+width)]                
+                except:
+                    continue
 
-                    plt.figure()
-                    plot_snippet(data[:,max(int(eod_peak-eod_width*3),0):min(int(eod_peak+eod_width*3),len(data[0]))],cp, ct, cc)
-                    plt.figure()
-                    plt.imshow(h_pattern.reshape(4,8))
-                    plt.colorbar()
-                    plt.figure()
-                    plt.imshow(w_pattern.reshape(4,8))
-                    plt.colorbar()                
-                    plt.show()
-
-                    # only skip if it is really an EOD?
-                    skip = len(cc)   
-
-                '''             
+                skip = len(cc)   
 
                 print('an EOD!')
 
@@ -836,7 +900,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
                 # get indices of clusters that are relevant for now. 
                 # e.g. no idle clusters, no clusters that have a recent peak assigned
-                cluster_keys, recent_spike = get_relevant_cluster_keys(all_clusters,eod_time*dt+starttime,track_length_t,eod_width*3)
+                cluster_keys, recent_spike = get_relevant_cluster_keys(all_clusters,eod_time*dt+starttime,track_length_t,width*dt)
 
                 print('cluster keys:')
                 print(cluster_keys)
@@ -844,7 +908,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                 print(all_clusters.keys())
 
                 # get cluster candidates and their extracted spatial features
-                cc_keys, sf_err = get_cluster_candidates(all_clusters,cluster_keys,spatial_pattern,spatial_feature_error_threshold)
+                cc_keys, sf_err = get_cluster_candidates(all_clusters,cluster_keys,h_pattern,spatial_feature_error_threshold)
 
                 print('cluster candidates:')
                 print(cc_keys)
@@ -852,7 +916,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                 # now for each cluster candidate, keep only the ones that have similar temporal features
                 # imput both eods centered around peak and centered around trough.
                 # for each candidate, I extract another width. so I pass all data + peaks and troughs.
-                ac_keys, tf_err = assess_candidates(all_clusters,cc_keys,data,cp,ct,temporal_feature_error_threshold)
+                ac_keys, tf_err = assess_candidates(all_clusters,cc_keys,maxchan,data,cp,ct,cc,temporal_feature_error_threshold,dt)
 
                 print('accepted candidates:')
                 print(ac_keys)
@@ -895,37 +959,35 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                         # which causes gaps in the spike train.
 
 
-                        if (len(cc_keys)>1) or (recent_spike == True) or not (single_eod(spatial_pattern)) \
-                        or (np.linalg.norm(get_position(spatial_pattern)-get_position(all_clusters[key].get_last_feature('f_spatial'))) > 1):
+                        if (len(cc_keys)>1) or (recent_spike == True) or not (single_eod(h_pattern)) \
+                        or (np.linalg.norm(get_position(h_pattern)-get_position(all_clusters[key].get_last_feature('f_spatial'))) > 1):
                             c_sf = all_clusters[key].get_last_feature('f_spatial')
-                            c_eod = eods[:,np.argmax(spatial_pattern)]
                             c_tf = all_clusters[key].get_last_feature('f_temporal')
                         else:
-                            c_sf = spatial_pattern
-                            c_eod = eods[:,np.argmax(c_sf)]
-                            c_tf = real_feat(c_eod,dt)[1]
+                            c_sf = h_pattern
+                            c_tf = np.stack([p_eods,t_eods])
 
                         locale=locals()
                         dd = {v:locale[v] for v in debug_vars}
                         
-                        if (key =='potential_eod') and (len(ac_keys) == 2) and (single_eod(spatial_pattern)):
+                        if (key =='potential_eod') and (len(ac_keys) == 2) and (single_eod(h_pattern)):
                             print('single EOD:')
-                            print(single_eod(spatial_pattern))
+                            print(single_eod(h_pattern))
                             connecting_cluster = ac_keys[1]
                         else:
                             connecting_cluster = 0
 
                         if key != 'potential_eod' or len(ac_keys)==1:
-                            all_clusters[key].update(p_idx*dt+starttime,c_sf,c_tf,connecting_cluster,debug_dict=dd)
+                            all_clusters[key].update(eod_time*dt+starttime,c_sf,c_tf,connecting_cluster,debug_dict=dd)
                     
 
-
+                    '''
                     if 'potential_eod' in ac_keys:
 
                         print('spikes in last second:')
-                        print(all_clusters['potential_eod'].get_spike_count(p_idx*dt+starttime))
+                        print(all_clusters['potential_eod'].get_spike_count(eod_time*dt+starttime))
 
-                        if all_clusters['potential_eod'].get_spike_count(p_idx*dt+starttime) >= 10:
+                        if all_clusters['potential_eod'].get_spike_count(eod_time*dt+starttime) >= 10:
                             mc =  np.argmax(all_clusters['potential_eod'].f_spatial, axis=1)
                             u, i, c = np.unique(mc, return_inverse=True, return_counts=True)
 
@@ -979,7 +1041,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                     ############################################################################################################
 
                                     # if there are at least 10 close clusters, make it a new cluster.
-                                    new_cluster = cluster_object(str(maxlabel+1),track_length,debug_vals=debug_vars)
+                                    new_cluster = cluster_object(str(maxlabel+1),track_length,temporal_featnum=len(c_tf[0]),debug_vals=debug_vars)
                                     maxlabel = maxlabel + 1 
 
                                     #sort them in chronological order
@@ -996,24 +1058,27 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                 
                                 # remove these features from potential eods so they are not clustered again.
                                 all_clusters['potential_eod'].delete(g_idxs)
+                                '''
 
                 else: #if (recent_spike == False) and (len(cc_keys)<2) and (single_eod(spatial_pattern)): # and (potential_eod.recently_spiked() == False):
                     print('maybe its a new cluster?')
                     
-                    c_sf = spatial_pattern
-                    c_eod = p_eods[:,np.argmax(c_sf)]
-                    c_tf = np.vstack([p_eods[np.argmax(c_sf)],t_eods[np.argmax(c_sf)]]) #real_feat(c_eod,dt)[1]
+                    c_sf = h_pattern
+                    #c_eod = p_eods[:,np.argmax(c_sf)]
+                    c = np.argmax(c_sf)
+                    
+                    c_tf = np.stack([p_eods,t_eods]) #real_feat(c_eod,dt)[1]
                     
                     
-                    # create new clusters               
+                    # cryeate new clusters               
                     if manual_input:
                         print('manual input required')
-                        answer, manual_input = ask_the_user(spatial_pattern,eods,eod_time*dt)
+                        answer, manual_input = ask_the_user(h_pattern,p_eods[maxchan],eod_time*dt)
                         if answer == 'y':
                             print('adding cluster')
 
                             # create new EOD cluster 
-                            new_cluster = cluster_object(str(maxlabel+1),track_length,temporal_featnum=len(c_eod),debug_vals=debug_vars)
+                            new_cluster = cluster_object(str(maxlabel+1),track_length,temporal_featnum=f_width,debug_vals=debug_vars)
                             maxlabel = maxlabel + 1 
 
                             locale=locals()
@@ -1028,31 +1093,30 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                             print(new_cluster.f_spatial)
                             print(new_cluster.f_temporal)
 
-                            
                             all_clusters[str(maxlabel)] = new_cluster
                     else:
-                        print('potential_eod at time: %f s'%(p_idx*dt))
+                        print('potential_eod at time: %f s'%(eod_time*dt))
                         # add to potential EOD space
                         # -->  implement later when the rest works.
 
                         locale=locals()
                         dd = {v:locale[v] for v in debug_vars}
 
-                        all_clusters['potential_eod'].update(eod_peak*dt+starttime, c_sf, c_tf, 0,debug_dict=dd)
+                        #all_clusters['potential_eod'].update(eod_peak*dt+starttime, c_sf, c_tf, 0,debug_dict=dd)
                         
                         # check if there were 10 eods in the last second with the same maxchan.
                         # if yes, compare their temp feat
                         # if they are close, add new cluster.
                         
 
-            else:
-                print('wavefish or artefact at time: %f s'%(p_idx*dt))
+            #else:
+            #    print('wavefish or artefact at time: %f s'%(p_idx*dt))
             # add eel if there is one.
-            if p_idx in cur_eel:
-                print('adding to eel cluster')
-                eel.update(p_idx*dt+starttime,np.var(eods,axis=0),real_feat(eods[:,np.argmax(np.var(eods,axis=0))],dt)[1],0)
+            #if p_idx in cur_eel:
+            #    print('adding to eel cluster')
+            #    eel.update(p_idx*dt+starttime,np.var(eods,axis=0),real_feat(eods[:,np.argmax(np.var(eods,axis=0))],dt)[1],0)
             
-            '''
+            
         if endtime == endtimes[-1]:
             print('saving to: ')
             print('%s%i.pkl'%(save_path,int(endtime/60)-1))
@@ -1111,4 +1175,4 @@ if __name__ == '__main__':
 
         # maybe first check the last file that was output to the save folder and continue analysis from there?
         # 
-        get_clusters(master_file,slave_file,save_folder,starttime=starttime*60,debug_vars=['c_tf','c_sf','c_eod'])
+        get_clusters(master_file,slave_file,save_folder,starttime=starttime*60,debug_vars=['c_sf'])
