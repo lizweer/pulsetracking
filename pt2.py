@@ -1,6 +1,7 @@
 import thunderfish.dataloader as dl
 import thunderfish.eventdetection as ed
-import pulse_tracker_helper as pth
+import pulse_tracker_helper_new as pth
+import thunderfish.lizpulses as lp
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,12 +17,19 @@ from scipy.ndimage.measurements import center_of_mass
 
 from scipy.spatial.distance import cdist
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
 import pickle
 import re
 
 import copy
 
 import argparse
+
+from sklearn.cluster import DBSCAN
+
+# save all eods. then compare across the same channel.
 
 
 class pd(object):
@@ -106,7 +114,7 @@ class cluster_object(object):
 
         # storage buffers for features. Each feature is only tracked for track_length.        
         self.f_spatial = np.ones((track_length, grid_shape[0]*grid_shape[1]))*99
-        self.f_temporal = np.ones((track_length, temporal_featnum))*99
+        self.f_temporal = np.ones((track_length, 2, 32, temporal_featnum))*99
         self.f_ts = np.zeros(track_length)
         self.f_connecting_clusters = np.zeros(track_length)
 
@@ -313,66 +321,42 @@ def load_channels(master_filepath,slave_filepath,starttime,endtime):
     print('data loaded')
     return x,data,dt
 
-def extract_eod_times(data, thresh, peakwidth, samplerate, win_size = 0.0005, n_stds = 1000, threshold_factor=6):
+def extract_eod_times(data, thresh, peakwidth, samplerate, interp_freq, win_size = 0.0005, n_stds = 1000, threshold_factor=6):
 
     print('extracting times')
-    all_peaks = []
+
+    all_int_data = np.array([])
+
     channels = []
-
-
+    x_peaks = []
+    x_troughs = []
+    eod_hights = []
+    eod_widths = []
 
     for i in range(data.shape[1]):
         y = data[:,i]
+        x_peak, x_trough, eod_hight, eod_width, int_samplerate, int_data, _ = lp.extract_eod_times(y,samplerate,cutwidth=0.0002,interp_freq=interp_freq)
+        plt.show()
+        if len(all_int_data)>0:
+            all_int_data = np.vstack([all_int_data,int_data])
+            x_peaks = np.concatenate((x_peaks,x_peak))
+            x_troughs = np.concatenate((x_troughs,x_trough))
+            eod_hights = np.concatenate((eod_hights,eod_hight))
+            eod_widths = np.concatenate((eod_widths,eod_width))
+            channels = np.concatenate((channels,np.ones(len(eod_width))*i))
+        else:
+            all_int_data = int_data
+            x_peaks = x_peak
+            x_troughs = x_trough
+            eod_hights = eod_hight
+            eod_widths = eod_width
+            channels = np.ones(len(eod_width))*i
 
-        '''
-        # standard deviation of data in small snippets:
-        win_size_indices = int(win_size * samplerate)
-        if win_size_indices < 10:
-            win_size_indices = 10
-        step = len(data)//n_stds
-        if step < win_size_indices//2:
-            step = win_size_indices//2
-        stds = [np.std(y[i:i+win_size_indices], ddof=1)
-                for i in range(0, len(y)-win_size_indices, step)]
-
-        
-        threshold = np.median(stds) * threshold_factor
-        '''
-        pk, tr = ed.detect_peaks(y, thresh)
-
-        if len(pk)>1:
-            
-            #peaks = pth.makeeventlist(pk, tr, y, peakwidth*samplerate, 2) 
-            #peaks, _, _, _ = pth.discard_connecting_eods(peaks[0], peaks[1], peaks[3], peaks[4])
-            
-            peaks = pth.makeeventlist(pk,tr,y,peakwidth)
-            peakindices, _, _ = pth.discardnearbyevents(peaks[0],peaks[1],peakwidth)
-            peaks = np.transpose(peaks[0,peakindices])
-
-            all_peaks.append(peaks)
-            channels.append(i)
-
-    y = data
-    
-    idx_arr = np.ndarray([0])
-    chan_arr = np.ndarray([0])
-
-    for channel, p in zip(channels,all_peaks):
-        idx_arr = np.concatenate([idx_arr,p])
-        chan_arr = np.concatenate([chan_arr,np.ones(len(p))*channel])
-
-    sort_idx = np.argsort(idx_arr)
-    idx_arr = idx_arr[sort_idx]
-    chan_arr = chan_arr[sort_idx]
-
-    idx_arr_u = np.unique(idx_arr)
-    elec_mask = np.zeros((len(idx_arr_u),data.shape[1]))
-
-    for i,t_u in enumerate(idx_arr_u):
-        elec_mask[i,chan_arr[idx_arr==t_u].astype('int')] = 1
-
+    # sort by peaktimes.n
+    a = np.argsort(x_peaks)
     print('times extracted')
-    return idx_arr_u, elec_mask
+
+    return x_peaks[a], x_troughs[a], eod_hights[a], eod_widths[a], channels[a], all_int_data, int_samplerate
 
 
 ### functions for extracting features
@@ -431,13 +415,9 @@ def single_eod(pattern, grid_shape=(4,8)):
     # compute two max channels
     maxchan = np.argsort(pattern)[:2]
     
-    print(maxchan)
     # then check if they connect.
     xpos = np.mod(maxchan,grid_shape[1])
     ypos = np.floor(maxchan/grid_shape[1])
-
-    print(xpos)
-    print(ypos)
 
     if (np.abs(np.diff(xpos))<=1) and (np.abs(np.diff(ypos))<=1):
         return True
@@ -499,9 +479,9 @@ def zero_runs(a):
     return ranges
 
 def plot_snippet(eods):
-    for i in range(eods.shape[1]):
+    for i in range(eods.shape[0]):
         plt.subplot(4,8,i+1)
-        plt.plot(eods[:,i])
+        plt.plot(eods[i])
         plt.ylim([np.min(eods),np.max(eods)])
         plt.axis('off')
 
@@ -530,11 +510,13 @@ def get_relevant_cluster_keys(all_clusters,c_time,track_length_t,peakwidth):
     return np.array(relevant_keys), recent_spike
 
 def get_cluster_candidates(clusters, cluster_keys, spatial_pattern, spatial_feature_error_threshold,noise_bound=1):
-    
-    if len(cluster_keys) > 0:
+    print('cluster keys')
+    print(cluster_keys)
+    print(len(cluster_keys[cluster_keys!='potential_eod']))
+    if len(cluster_keys)>0 and len(cluster_keys[cluster_keys!='potential_eod']) > 0:
         # get spatial features from clusters
         #c_feats = np.array([])
-
+        #print(cluster_keys)
         c_feats = np.stack([clusters[key].f_spatial for key in cluster_keys])
 
         # alternative way by subtracting
@@ -546,30 +528,47 @@ def get_cluster_candidates(clusters, cluster_keys, spatial_pattern, spatial_feat
 
         cluster_candidate_keys = cluster_keys[np.count_nonzero(c_error<spatial_feature_error_threshold,axis=1)>=noise_bound]
 
-
+        '''
         # get differences between current spatial pattern and saved spatial patterns for clusters
-        #c_diff = np.linalg.norm((c_feats - spatial_pattern)**2, axis=2)
-        #amin = np.argmin(c_diff,axis=1)
-
+        c_diff = np.linalg.norm((c_feats - spatial_pattern)**2, axis=2)
+        amin = np.argmin(c_diff,axis=1)
 
         # for each cluster, use one representative spatial feature for linear regression
-        #x_glm = np.stack([c_feats[i,amin[i]] for i in range(c_feats.shape[0])])
+        x_glm = np.stack([c_feats[i,amin[i]] for i in range(c_feats.shape[0])])
+
+        print(x_glm.shape)
 
         # do a linear regression on these spatial patterns
-        #reg = lsq_linear(np.transpose(x_glm),spatial_pattern,(0,1.5))
+        reg = lsq_linear(np.transpose(x_glm),spatial_pattern,(0,1.5))
 
         # what if I do linear regression on all patterns and use the sum of the ones that are used as result??
+        c_error = np.abs(reg.x - 1)
 
-        #c_error = np.abs(reg.x - 1)
+        print('spatial error')
+        print(c_error)
+
+        print('error of fit')
+        print(reg.cost)
 
         # select candidate clusters based on linear regression error.
-        #cluster_candidate_keys = cluster_keys[c_error < spatial_feature_error_threshold]
+        cluster_candidate_keys = cluster_keys[c_error < spatial_feature_error_threshold]
 
+        #if len(cluster_candidate_keys) == 0:
+        #    plt.figure()
+        #    plt.imshow(spatial_pattern.reshape(4,8))
+        #    plt.colorbar()
+
+        #    for xglm in x_glm:
+        
+        #        plt.figure()
+        #        plt.imshow(xglm.reshape(4,8))
+        #        plt.colorbar()
+        #    plt.show()
 
         # maybe unneccesary now I dont use this anymore.
-        # cc_spatial_features = get_spatial_features(cluster_candidate_keys,spatial_pattern,reg.x[c_error < spatial_feature_error_threshold],x_glm[c_error < spatial_feature_error_threshold])
-
-        return cluster_candidate_keys, np.min(c_error,axis=1)
+        #cc_spatial_features = get_spatial_features(cluster_candidate_keys,spatial_pattern,reg.x[c_error < spatial_feature_error_threshold],x_glm[c_error < spatial_feature_error_threshold])
+        '''
+        return cluster_candidate_keys, c_error
     else:
         return [],[]
 
@@ -588,14 +587,14 @@ def get_spatial_features(cc_keys,spatial_pattern, glm_coef,glm_x):
 
     return cc_spatial_features
 
-def ask_the_user(spatial_pattern,eods,time):
+def ask_the_user(spatial_pattern,eod,time):
 # ask for user input.
     manual_input = True
     
     plt.subplot(121)
     plt.imshow(spatial_pattern.reshape(4,8))
     plt.subplot(122)
-    plt.plot(eods[:,np.argmax(spatial_pattern)])
+    plt.plot(eod)
     plt.show()
     answer = ''
 
@@ -606,7 +605,14 @@ def ask_the_user(spatial_pattern,eods,time):
 
     return answer, manual_input
 
-def assess_candidates(clusters,cc_keys,eods,temporal_feature_error_threshold,dt,noise_bound=1):
+#def plot_cluster_features()
+#    f, ax = plt.subplots(2,10)
+
+#    for i in range(10):
+#        ax[].plot()
+
+
+def assess_candidates(clusters,cc_keys,maxchan,data,peaks,throughs,channels,temporal_feature_error_threshold,dt,noise_bound=1):
     
     ac_keys = []
     min_dist_norm = [0]
@@ -614,27 +620,71 @@ def assess_candidates(clusters,cc_keys,eods,temporal_feature_error_threshold,dt,
     
     # get temp features for the right channels
     for cc_key in cc_keys:
-        # get channels of interest
-        coi = np.argmax(clusters[cc_key].f_spatial,axis=1)
-        # get temp feat of current eods for coi
-        cur_feat = get_temp_feat(eods,coi,dt)
 
-        # get difference
-        f_dist = np.linalg.norm(clusters[cc_key].f_temporal - cur_feat.transpose(1,0,2),axis=2)
-        f_dist_norm = f_dist/np.linalg.norm(clusters[cc_key].f_temporal)
+        compare_features = clusters[cc_key].f_temporal[:,:,maxchan,:]
+        width = compare_features.shape[-1]
 
-        # change the differences that were computed for coi where eod==0
-        f_dist_norm[:,np.count_nonzero(eods[:,coi],axis=0)== 0] = 99
+        if len(peaks[channels==maxchan])>1:
+            continue
+        cfeats = np.vstack([data[maxchan, int(peaks[channels==maxchan]-width/2):int(peaks[channels==maxchan]+width/2)],data[maxchan, int(throughs[channels==maxchan]-width/2):int(throughs[channels==maxchan]+width/2)]])
+        
+        compare_features = np.concatenate((compare_features,cfeats.reshape(-1,2,width)))
+        print(compare_features.shape)
 
-        # as there are three for each, use min errors
-        min_dist = np.min(f_dist,axis=0)
-        min_dist_norm = np.min(f_dist_norm,axis=0)
+        keep0 = (np.sum(np.abs(np.diff(compare_features[:,0,:],axis=1)),axis=1)>0)
+        keep1 = (np.sum(np.abs(np.diff(compare_features[:,1,:],axis=1)),axis=1)>0)
+        print(np.sum(compare_features[:,0,:],axis=1))
+        print(keep0)
+        # now do pca? on what? what if I only have one channel to connect to?
+        # for now just take the distance which should somehow be normalized.
+        # subtract the slope and normalize the snippets
+        compare_features[keep0,0,:], sr = lp.subtract_slope(compare_features[keep0,0,:])
+        compare_features[keep1,1,:], sr = lp.subtract_slope(compare_features[keep1,1,:])
 
-        if np.count_nonzero(min_dist_norm<temporal_feature_error_threshold) >= noise_bound:
-            ac_keys.append(cc_key)
-        err.append(np.min(min_dist_norm))
+        compare_features[keep0,0,:] = StandardScaler().fit_transform(compare_features[keep0,0,:].T).T
+        compare_features[keep1,1,:] = StandardScaler().fit_transform(compare_features[keep1,1,:].T).T
 
-    print('temp err')
+        # scale so that the absolute integral = 1.
+        compare_features[keep0,0,:] = (compare_features[keep0,0,:].T/np.sum(np.abs(compare_features[keep0,0,:]),axis=1)).T
+        compare_features[keep1,1,:] = (compare_features[keep1,1,:].T/np.sum(np.abs(compare_features[keep1,1,:]),axis=1)).T
+        
+        # now do PCA?
+        #plt.figure()
+        #plt.plot(compare_features[:,0,:].T)
+        #plt.show()
+        #plt.plot(compare_features[:,1,:].T)
+        #plt.show()
+
+        
+        fsum = np.sum(compare_features[:,0,:],axis=1)
+
+        if np.count_nonzero(~np.isnan(fsum)) > 1:
+
+            pcs = PCA(2).fit(compare_features[~np.isnan(fsum),0,:]).transform(compare_features[~np.isnan(fsum),0,:])
+            p_diff = np.linalg.norm(np.abs(pcs[:-1]-pcs[-1]),axis=1)
+
+            pcs = PCA(2).fit(compare_features[~np.isnan(fsum),1,:]).transform(compare_features[~np.isnan(fsum),1,:])
+            t_diff = np.linalg.norm(np.abs(pcs[:-1]-pcs[-1]),axis=1)
+
+            error = np.min(np.vstack([p_diff,t_diff]),axis=1)
+
+            if np.count_nonzero(error<temporal_feature_error_threshold) >= noise_bound:
+                ac_keys.append(cc_key)
+            #else:
+            '''
+                plt.figure()
+                plt.plot(compare_features[~np.isnan(fsum),0,:].T,c='b')
+                plt.plot(compare_features[~np.isnan(fsum),1,:].T,c='r')
+                plt.plot(compare_features[-1,0,:],c='k')
+                plt.plot(compare_features[-1,1,:],c='k')
+                plt.show()  
+            '''              
+
+            err.append(np.min(error))
+        else:
+            err.append(1)
+
+    print('temp errors')
     print(err)
 
     return np.array(ac_keys), err
@@ -654,8 +704,12 @@ def argmax_2d(a):
 
 def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save_buffer=60,grid_shape=(4,8), 
     starttime=0, endtime=60*60*48, peak_detection_threshold=0.001, peakwidth=0.0005, track_length=10, 
-    spatial_feature_error_threshold=0.25, temporal_feature_error_threshold=0.1, 
+    spatial_feature_error_threshold=0.25, temporal_feature_error_threshold=0.025, 
     track_length_t = 10, debug_vars=[], save_artefacts=False, save_wavefish=False,mode=''):
+    
+    # make the cutwidth fixed based on the eod of the fish of interest.
+    
+    
     '''
     Get EOD clusters
 
@@ -714,7 +768,9 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
     
     maxlabel = 0
     dd={}
-
+    interp_freq = 200000
+    f_width = int(0.00075*interp_freq)
+    
     # check if path for previous path exists, if it does, use those clusters and empty them.
     print("looking for this:")
     print('%s%i.pkl'%(save_path,int(starttime/60-1)))
@@ -754,7 +810,9 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         all_clusters = {}
 
         eel = cluster_object('eel',track_length)
-        potential_eod = cluster_object('potential_eod',track_length)
+
+        potential_eod = cluster_object(str(maxlabel+1),track_length,temporal_featnum=f_width,debug_vals=debug_vars)
+
         potential_eod.debug = {v:[] for v in debug_vars}
 
         all_clusters['potential_eod'] = potential_eod
@@ -769,31 +827,185 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
         
         # load data and find potential eod times
         x, data, dt = load_channels(master_filepath,slave_filepath,starttime,endtime)
-        idx_arr, elec_masks = extract_eod_times(data,peak_detection_threshold,peakwidth/dt,1/dt)
-        
+        x_peaks, x_troughs, eod_hights, eod_widths, channels, data, samplerate = extract_eod_times(data,peak_detection_threshold,peakwidth/dt,1/dt,interp_freq)
+        dt = 1/samplerate
+
         # extract eel times
-        cur_eel = extract_eel_times(data)
+        # cur_eel = extract_eel_times(data)
 
         # width for cutting EODs
-        cutwidth = peakwidth/dt
+        #cutwidth = peakwidth/dt
+
+        # even for moving fish, width should stay the same.
+        merge_threshold_width = 0.5
+        n_gaus_width = 3
+
+        width_labels = lp.BGM(eod_widths,merge_threshold_width,n_gaus_width,verbose=1)
+
+        #for w in np.unique(width_labels):
+        #    plt.hist(eod_widths[width_labels==w])
+        #    print(w)
+        #    print(np.median(eod_widths[width_labels==w]))
+        #plt.show()
 
         # go through each peak
-        for i_peak, (p_idx, elec_mask) in enumerate(zip(idx_arr,elec_masks)): 
+        for w in np.unique(width_labels):
+            wx_peaks = x_peaks[width_labels==w]
+            wx_troughs = x_troughs[width_labels==w]
+            weod_hights = eod_hights[width_labels==w]
+            weod_widths = eod_widths[width_labels==w]
+            wchannels = channels[width_labels==w]
 
-            # cut along peak to get the EOD shape and convert to mV
-            if p_idx < cutwidth:
-                eods = data[0:int(p_idx+cutwidth)]*1000
+            ap = []
+            at = []
+            tt = []
+            nt = 1
+
+            if np.median(weod_widths)>f_width/3:
+                print('too wide')
+                continue
             else:
-                eods = data[int(p_idx-cutwidth):int(p_idx+cutwidth)]*1000
-          
-            # set artefacts and waves to zero
-            artefact_mask = detect_artefacts(eods,dt)        
-            wavefish_mask = detect_wavefish(eods)
+                print('good width')
 
-            eods[:,np.invert((artefact_mask*wavefish_mask).astype('bool'))] = 0
+            #for i, d in enumerate(data):
+            #    plt.plot(d)
+            #    plt.plot(wx_peaks[wchannels==i],d[wx_peaks[wchannels==i].astype('int')],'x')
+            #    plt.plot(wx_troughs[wchannels==i],d[wx_troughs[wchannels==i].astype('int')],'x')
+            #    plt.show()
 
-            # if the detected peak(s) are potential eods, start the analysis.
-            if np.sum(artefact_mask*wavefish_mask*elec_mask) > 0:
+            skip = 0
+
+            for i_peak, (eod_time, eod_width, eod_peak, eod_trough) in enumerate(zip((wx_peaks+wx_troughs)/2, weod_widths, wx_peaks, wx_troughs)): 
+
+                if skip > 0:
+                    skip = skip-1
+                    continue
+
+                h_pattern = np.zeros(32)
+                w_pattern = np.zeros(32)
+                
+                # check out surrounding peaks, troughs, and hights.
+                # but I should somehow center around the highest peak?
+                sl = (((wx_peaks>(eod_time-eod_width)) & (wx_peaks<(eod_time+eod_width)) & (wx_troughs>(eod_time-eod_width*3)) & (wx_troughs<(eod_time+eod_width*3))) | ((wx_troughs>(eod_time-eod_width)) & (wx_troughs<(eod_time+eod_width)) & (wx_peaks>(eod_time-eod_width*3)) & (wx_peaks<(eod_time+eod_width*3))))
+      
+                cp = wx_peaks[sl]
+                ct = wx_troughs[sl]
+                cc = wchannels[sl]
+
+                ch = weod_hights[sl]
+                cw = weod_widths[sl]
+
+                skip = len(cc)
+
+                if np.min(ch)/np.max(ch) > 0.25:
+                    continue
+                    
+                h_pattern[cc.astype('int')] = ch
+                w_pattern[cc.astype('int')] = cw
+
+                maxchan = np.argmax(h_pattern)
+                width = f_width/2
+
+                p_eods = np.zeros((32,f_width))
+                t_eods = np.zeros((32,f_width))
+
+                for c in np.unique(cc):
+                    if len(cc[cc==c]) == 1:
+                        try:
+                            p_eods[int(c)] = data[int(c), int(cp[cc==c]-width):int(cp[cc==c]+width)]
+                            t_eods[int(c)] = data[int(c), int(ct[cc==c]-width):int(ct[cc==c]+width)]
+                        except:
+                            pass                
+                #try:
+                if len(cp[cc==maxchan]) == 1:
+                    m_eod = data[int(maxchan), int(cp[cc==maxchan]-width):int(cp[cc==maxchan]+width)]
+                else:
+                    m_eod = []
+                #except:
+                #    m_eod = []
+
+                artefact_mask = detect_artefacts(p_eods.T,dt)        
+                wavefish_mask = detect_wavefish(p_eods.T)
+
+                # if the detected peak(s) are potential eods, start the analysis.
+                if np.sum(p_eods) == 0:
+                    continue
+
+                p_eods[np.invert((artefact_mask).astype('bool'))] = 0
+
+                artefact_mask = detect_artefacts(t_eods.T,dt)        
+                wavefish_mask = detect_wavefish(t_eods.T)
+                t_eods[np.invert((artefact_mask).astype('bool'))] = 0
+                # if the detected peak(s) are potential eods, start the analysis.
+                if np.sum(t_eods) == 0:
+                    continue
+
+                print(nt)
+                print(eod_time*dt)
+                if eod_time*dt<nt:
+                    ap.append(p_eods.flatten())
+                    at.append(t_eods.flatten())
+                    tt.append(eod_time)
+                    continue
+                else:
+                    if len(ap)<10:
+                        print('NO FISH')
+                        continue
+                    pf = StandardScaler().fit_transform(np.vstack(ap).T).T
+                    ppca = PCA(5).fit_transform(pf)
+                    tf = StandardScaler().fit_transform(np.vstack(at).T).T
+                    tpca = PCA(5).fit_transform(tf)
+
+                    pc = DBSCAN(eps=20, min_samples=10).fit(ppca).labels_
+                    tc = DBSCAN(eps=20, min_samples=10).fit(tpca).labels_
+
+                    for cl in np.unique(pc[pc!=-1]):
+                        plt.figure()
+                        plot_snippet(np.mean(pf[pc==cl],axis=0).reshape(32,-1))
+
+                    for cl in np.unique(tc[tc!=-1]):
+                        plt.figure()
+                        plot_snippet(np.mean(pf[tc==cl],axis=0).reshape(32,-1))
+
+                    
+                    plt.figure()
+                    for cl in np.unique(pc):
+                        if cl==-1:
+                            plt.plot(ppca[pc==cl,0],ppca[pc==cl,1],'o',c='k')
+                        else:      
+                            plt.plot(ppca[pc==cl,0],ppca[pc==cl,1],'o')
+                    
+                    plt.figure()
+                    for cl in np.unique(tc):
+                        if cl==-1:
+                            plt.plot(tpca[tc==cl,0],tpca[tc==cl,1],'o',c='k')
+                        else:      
+                            plt.plot(tpca[tc==cl,0],tpca[tc==cl,1],'o')
+                    plt.figure()
+                    tt = np.array(tt)
+                    for cl in np.unique(tc):
+                        plt.plot(tt[tc==cl],cl*np.ones(len(tt[tc==cl])),'o')
+                    plt.figure()
+                    for cl in np.unique(pc):
+                        plt.plot(tt[pc==cl],cl*np.ones(len(tt[pc==cl])),'o')
+
+                    plt.show()
+
+                    ap = []
+                    at = []
+                    tt = []
+                    nt = nt + 1
+                    continue
+
+                # first compute all of these features for n seconds. then do the sliding window.
+                # save eod times.
+
+                # choose the clusters with the smallest coefficient of variation, but use both peak and trough clusters for glueing to the next phases.
+
+                # so I have: 1. mean peakfeatures, 1. mean troughfeatures, 1. timestamp (seconds), 2. eod_times, 2. eod_timelabels.
+
+                #plot_snippet(eods,np.arange(int(cp[cc==maxchan]-width),int(cp[cc==maxchan]+width)),cp,ct,cc)
+                #plt.show()
 
                 print('an EOD!')
 
@@ -802,24 +1014,23 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
                 # get indices of clusters that are relevant for now. 
                 # e.g. no idle clusters, no clusters that have a recent peak assigned
-                cluster_keys, recent_spike = get_relevant_cluster_keys(all_clusters,p_idx*dt+starttime,track_length_t,peakwidth)
+                cluster_keys, recent_spike = get_relevant_cluster_keys(all_clusters,eod_time*dt+starttime,track_length_t,width*dt)
 
                 print('cluster keys:')
                 print(cluster_keys)
 
                 print(all_clusters.keys())
 
-                # only use spatial pattern not resulting of wavefish or artefacts          
-                spatial_pattern = np.var(eods,axis=0)
-
                 # get cluster candidates and their extracted spatial features
-                cc_keys, sf_err = get_cluster_candidates(all_clusters,cluster_keys,spatial_pattern,spatial_feature_error_threshold)
+                cc_keys, s_err = get_cluster_candidates(all_clusters,cluster_keys[cluster_keys!='potential_eod'],h_pattern,spatial_feature_error_threshold)
 
                 print('cluster candidates:')
                 print(cc_keys)
 
                 # now for each cluster candidate, keep only the ones that have similar temporal features
-                ac_keys, tf_err = assess_candidates(all_clusters,cc_keys,eods,temporal_feature_error_threshold,dt)
+                # imput both eods centered around peak and centered around trough.
+                # for each candidate, I extract another width. so I pass all data + peaks and troughs.
+                ac_keys, t_err = assess_candidates(all_clusters,cc_keys,maxchan,data,cp,ct,cc,temporal_feature_error_threshold,dt)
 
                 print('accepted candidates:')
                 print(ac_keys)
@@ -862,35 +1073,36 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                         # which causes gaps in the spike train.
 
 
-                        if (len(cc_keys)>1) or (recent_spike == True) or not (single_eod(spatial_pattern)) \
-                        or (np.linalg.norm(get_position(spatial_pattern)-get_position(all_clusters[key].get_last_feature('f_spatial'))) > 1):
+                        if (len(cc_keys)>1) or (recent_spike == True) or not (single_eod(h_pattern)) \
+                        or (np.linalg.norm(get_position(h_pattern)-get_position(all_clusters[key].get_last_feature('f_spatial'))) > 1):
+                            print('not a single EOD')
                             c_sf = all_clusters[key].get_last_feature('f_spatial')
-                            c_eod = eods[:,np.argmax(spatial_pattern)]
                             c_tf = all_clusters[key].get_last_feature('f_temporal')
                         else:
-                            c_sf = spatial_pattern
-                            c_eod = eods[:,np.argmax(c_sf)]
-                            c_tf = real_feat(c_eod,dt)[1]
+                            print('single_eod')
+                            c_sf = h_pattern
+                            c_tf = np.stack([p_eods,t_eods])
 
                         locale=locals()
                         dd = {v:locale[v] for v in debug_vars}
                         
-                        if (key =='potential_eod') and (len(ac_keys) == 2) and (single_eod(spatial_pattern)):
+                        if (key =='potential_eod') and (len(ac_keys) == 2) and (single_eod(h_pattern)):
                             print('single EOD:')
-                            print(single_eod(spatial_pattern))
+                            print(single_eod(h_pattern))
                             connecting_cluster = ac_keys[1]
                         else:
                             connecting_cluster = 0
 
                         if key != 'potential_eod' or len(ac_keys)==1:
-                            all_clusters[key].update(p_idx*dt+starttime,c_sf,c_tf,connecting_cluster,debug_dict=dd)
-
+                            all_clusters[key].update(eod_time*dt+starttime,c_sf,c_tf,connecting_cluster,debug_dict=dd)
+                    
+                    
                     if 'potential_eod' in ac_keys:
 
                         print('spikes in last second:')
-                        print(all_clusters['potential_eod'].get_spike_count(p_idx*dt+starttime))
+                        print(all_clusters['potential_eod'].get_spike_count(eod_time*dt+starttime))
 
-                        if all_clusters['potential_eod'].get_spike_count(p_idx*dt+starttime) >= 10:
+                        if all_clusters['potential_eod'].get_spike_count(eod_time*dt+starttime) >= 10:
                             mc =  np.argmax(all_clusters['potential_eod'].f_spatial, axis=1)
                             u, i, c = np.unique(mc, return_inverse=True, return_counts=True)
 
@@ -944,7 +1156,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                     ############################################################################################################
 
                                     # if there are at least 10 close clusters, make it a new cluster.
-                                    new_cluster = cluster_object(str(maxlabel+1),track_length,debug_vals=debug_vars)
+                                    new_cluster = cluster_object(str(maxlabel+1),track_length,temporal_featnum=f_width,debug_vals=debug_vars)
                                     maxlabel = maxlabel + 1 
 
                                     #sort them in chronological order
@@ -961,53 +1173,60 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
                                 
                                 # remove these features from potential eods so they are not clustered again.
                                 all_clusters['potential_eod'].delete(g_idxs)
+                                
 
-                if (recent_spike == False) and (len(cc_keys)<2) and (single_eod(spatial_pattern)): # and (potential_eod.recently_spiked() == False):
+                else:#if (recent_spike == False) and (len(cc_keys)<2) and (single_eod(h_pattern)): # and (potential_eod.recently_spiked() == False):
                     print('maybe its a new cluster?')
                     
-                    c_sf = spatial_pattern
-                    c_eod = eods[:,np.argmax(c_sf)]
-                    c_tf = real_feat(c_eod,dt)[1]
+                    c_sf = h_pattern
+                    #c_eod = p_eods[:,np.argmax(c_sf)]
+                    c = np.argmax(c_sf)
+                    
+                    c_tf = np.stack([p_eods,t_eods]) #real_feat(c_eod,dt)[1]
                     
                     
                     # create new clusters               
                     if manual_input:
                         print('manual input required')
-                        answer, manual_input = ask_the_user(spatial_pattern,eods,p_idx*dt)
+                        answer, manual_input = ask_the_user(h_pattern,p_eods[maxchan],eod_time*dt)
                         if answer == 'y':
                             print('adding cluster')
 
                             # create new EOD cluster 
-                            new_cluster = cluster_object(str(maxlabel+1),track_length,debug_vals=debug_vars)
+                            new_cluster = cluster_object(str(maxlabel+1),track_length,temporal_featnum=f_width,debug_vals=debug_vars)
                             maxlabel = maxlabel + 1 
 
                             locale=locals()
                             dd = {v:locale[v] for v in debug_vars}
-                            new_cluster.update(p_idx*dt+starttime,c_sf,c_tf,0, debug_dict=dd)
                             
+                            # for temp features, save current EOD shape.
+                            # this also implies the width.
+
+                            new_cluster.update(eod_peak*dt+starttime,c_sf,c_tf,0, debug_dict=dd)
                             all_clusters[str(maxlabel)] = new_cluster
                     else:
-                        print('potential_eod at time: %f s'%(p_idx*dt))
+                        print('potential_eod at time: %f s'%(eod_time*dt))
                         # add to potential EOD space
                         # -->  implement later when the rest works.
 
                         locale=locals()
                         dd = {v:locale[v] for v in debug_vars}
 
-                        all_clusters['potential_eod'].update(p_idx*dt+starttime, c_sf, c_tf, 0,debug_dict=dd)
+                        all_clusters['potential_eod'].update(eod_peak*dt+starttime, c_sf, c_tf, 0,debug_dict=dd)
                         
                         # check if there were 10 eods in the last second with the same maxchan.
                         # if yes, compare their temp feat
                         # if they are close, add new cluster.
                         
 
-            else:
-                print('wavefish or artefact at time: %f s'%(p_idx*dt))
+            #else:
+            #    print('wavefish or artefact at time: %f s'%(p_idx*dt))
             # add eel if there is one.
-            if p_idx in cur_eel:
-                print('adding to eel cluster')
-                eel.update(p_idx*dt+starttime,np.var(eods,axis=0),real_feat(eods[:,np.argmax(np.var(eods,axis=0))],dt)[1],0)
-
+            #if p_idx in cur_eel:
+            #    print('adding to eel cluster')
+            #    eel.update(p_idx*dt+starttime,np.var(eods,axis=0),real_feat(eods[:,np.argmax(np.var(eods,axis=0))],dt)[1],0)
+            
+            
         if endtime == endtimes[-1]:
             print('saving to: ')
             print('%s%i.pkl'%(save_path,int(endtime/60)-1))
@@ -1028,7 +1247,7 @@ def get_clusters(master_filepath, slave_filepath, save_path, load_buffer=10,save
 
             all_clusters_buffer = {}
             for c,v in all_clusters.items():
-                if (not v.is_idle(p_idx*dt+starttime,track_length_t)) or (c=='potential_eod'):
+                if (not v.is_idle(eod_time*dt+starttime,track_length_t)) or (c=='potential_eod'):
                     all_clusters_buffer[c] = v
             all_clusters = all_clusters_buffer
 
@@ -1045,19 +1264,17 @@ if __name__ == '__main__':
                         help='name of a file with time series data of an EOD recording')
     args = parser.parse_args()
 
-    print(args.master_files)
-
     for master_file,slave_file in zip(args.master_files,args.slave_files):
         if master_file[-1] == '/':
-            save_folder = 'data/results_old/' + master_file.split('/')[-2] + '/'
+            save_folder = 'data/results/' + master_file.split('/')[-2] + '/'
         else:
-            save_folder = 'data/results_old/' + master_file.split('/')[-1] + '/'
+            save_folder = 'data/results/' + master_file.split('/')[-1] + '/'
 
         starttime = 0
         
         if os.path.exists(save_folder):
             # check the last file that was saved and continue analysis there.
-            starttime = len([name for name in os.listdir(save_folder) if '.pkl' in name])
+            starttime = 48#len([name for name in os.listdir(save_folder) if '.pkl' in name])
 
         else:
             # make dir.
@@ -1066,4 +1283,4 @@ if __name__ == '__main__':
 
         # maybe first check the last file that was output to the save folder and continue analysis from there?
         # 
-        get_clusters(master_file,slave_file,save_folder,starttime=starttime*60,debug_vars=['c_tf','c_sf','c_eod'])
+        get_clusters(master_file,slave_file,save_folder,starttime=starttime*60,debug_vars=['c_sf','h_pattern','m_eod','s_err','t_err'])
