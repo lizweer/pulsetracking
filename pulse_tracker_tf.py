@@ -365,6 +365,10 @@ def percent_change(a,b):
 def argmax_2d(a):
     return np.unravel_index(np.argmax(a, axis=None), a.shape)
 
+def gapscore(t,tmin,tmax):
+
+    return max(1,(np.min(t)-tmin)/np.median(np.diff(t)))+max(1,(tmax-np.max(t))/np.median(np.diff(t)))
+
 def analyse_window(ap,at,ap_n,at_n,tt,maxchans,starttime,endtime,samplerate,int_f,mean_peak_eods,times_p,stimes_p,freqs,counter_p,o_data,data,x_peaks,x_troughs,channels,eod_hights,eod_width,f_width):                  
     
     time_res = 0.25
@@ -394,7 +398,7 @@ def analyse_window(ap,at,ap_n,at_n,tt,maxchans,starttime,endtime,samplerate,int_
         s_patterns = np.std(pf.reshape(pf.shape[0],32,-1),axis=2)**(1/3)
         s_patterns[np.isnan(s_patterns)] = 0
 
-        pc = OPTICS(min_samples=10).fit(s_patterns).labels_
+        pc = OPTICS(min_samples=5).fit(s_patterns).labels_
 
         prev_counter_p = counter_p
 
@@ -479,48 +483,97 @@ def analyse_window(ap,at,ap_n,at_n,tt,maxchans,starttime,endtime,samplerate,int_
             s_patterns = np.std(cur_mpe.reshape(cur_mpe.shape[0],32,-1),axis=2)**(1/3)
 
             # make three matrices.
-            pdm = cdist(s_patterns,s_patterns,'euclidean') #distance_matrix(s_patterns,s_patterns).flatten()
-            print('CDIST')
-            print(pdm)
+            pdm = np.corrcoef(s_patterns)**2#cdist(s_patterns,s_patterns,'correlation') #distance_matrix(s_patterns,s_patterns).flatten()
+            isisdm = np.zeros((len(cur_tt),len(cur_tt)))
+            gapsdm = np.zeros((len(cur_tt),len(cur_tt)))
+
+            # get a matrix of all the ISI combining scores
+            for x,_ in enumerate(cur_tt):
+                for y,_ in enumerate(cur_tt):
+                    # tODO: delete supershort isi intervals that are probs from the same wave.
+                    new_t = np.unique(np.sort(np.concatenate([cur_tt[x],cur_tt[y]])))
+                    isisdm[x,y] = np.std(np.diff(1/np.diff(new_t)))/min(np.std(np.diff(1/np.diff(cur_tt[x]))),np.std(np.diff(1/np.diff(cur_tt[y]))))
+                    gapsdm[x,y] = gapscore(new_t,t,t+window_size)/min(gapscore(cur_tt[x],t,t+window_size),gapscore(cur_tt[y],t,t+window_size))
 
             # get location of closest nonzero.
-            i = np.argmin(pdm[pdm>0])
-            idxs = np.argsort(pdm)
-            pdm_flat = pdm[idxs][len(cur_mpe):][::2]
-            idxs = idxs[len(cur_mpe):][::2]
             pops = []
 
+            w1 = -2
+            w2 = 1
+            w3 = 0.5
 
-            for i in idxs:
-                x = int(np.mod(i,len(cur_mpe)))
-                y = int(np.floor(i/len(cur_mpe)))
-
-                x1=np.std(cur_mpe[x].reshape(32,-1),axis=1)**(1/3)
-                x2=np.std(cur_mpe[y].reshape(32,-1),axis=1)**(1/3)
-
-                score = np.linalg.norm(x1-x2)/(0.5*(np.linalg.norm(x1)+np.linalg.norm(x2))) #min(np.sum((x1-x2)/(0.5*(x1+x2))),np.sum((x2-x1)/(0.5*(x1+x2))))
-                #print(score)
-                #score = np.linalg.norm(x1-x2)/np.sqrt(np.linalg.norm(x1)*np.linalg.norm(x2)) #geometric mean
+            combined_score = pdm*w1+isisdm*w2+gapsdm*w3
+            np.fill_diagonal(combined_score,9999)
 
 
-                # take into account harmonics.
-                if np.abs(max(cur_freqs[x],cur_freqs[y])/min(cur_freqs[x],cur_freqs[y]) - np.round(max(cur_freqs[x],cur_freqs[y])/min(cur_freqs[x],cur_freqs[y]))) > 0.2:
-                    continue
+            while np.min(combined_score)<0:
 
+                x,y = np.unravel_index(np.argmin(combined_score, axis=None), combined_score.shape)
+                print('distance score')
+                print(w1*pdm[x,y])
+                print('isi score')
+                print(w2*isisdm[x,y])
+                print(np.std(np.diff(1/np.diff(np.unique(np.sort(np.concatenate([cur_tt[x],cur_tt[y]])))))))
+                print(min(np.std(np.diff(1/np.diff(cur_tt[x]))),np.std(np.diff(1/np.diff(cur_tt[y])))))
+                print('gap score')
+                print(gapscore(np.unique(np.sort(np.concatenate([cur_tt[x],cur_tt[y]]))),t,t+window_size))
+                print(gapscore(cur_tt[x],t,t+window_size))
+                print(gapscore(cur_tt[y],t,t+window_size))
 
-                if (score<0.5 and cur_freqs[x]==cur_freqs[y]) or (score<0.2 and np.std(np.diff(append_spikes(np.sort(np.concatenate([cur_tt[x],cur_tt[y]])),t,t+window_size)))<min(np.std(np.diff(append_spikes(cur_tt[x],t,t+window_size))),np.std(np.diff(append_spikes(cur_tt[y],t,t+window_size))))) or (score<0.3 and ((np.min(cur_tt[x])>np.max(cur_tt[y]) or np.min(cur_tt[y])>np.max(cur_tt[x])))):
-                    #print('yes')
-                    if np.arange(prev_counter_p,counter_p)[y] not in pops and np.arange(prev_counter_p,counter_p)[x] not in pops:
-                        # append to whichever is more centered in the current timeblock
-                        center_d = t+window_size/2
+                print(w3*gapsdm[x,y])
+                print('combined score')
+                print(combined_score[x,y])
 
-                        if np.abs(center_d - np.mean(cur_tt[x])/samplerate+starttime) < np.abs(center_d - np.mean(cur_tt[y])/samplerate+starttime):
-                            stimes_p[np.arange(prev_counter_p,counter_p)[x]] = np.sort(np.concatenate([cur_tt[x],cur_tt[y]])).tolist()
-                            pops.append(np.arange(prev_counter_p,counter_p)[y])
-                        else:
-                            stimes_p[np.arange(prev_counter_p,counter_p)[y]] = np.sort(np.concatenate([cur_tt[x],cur_tt[y]])).tolist()
-                            pops.append(np.arange(prev_counter_p,counter_p)[x])
+                '''
+                plt.figure()
+                plt.plot(cur_tt[x],np.ones(len(cur_tt[x])),'o')
+                plt.plot(cur_tt[y],np.ones(len(cur_tt[y])),'o')
+                plt.title('yes')
+                plt.show()
+                '''
+
                 
+                x,y = np.unravel_index(np.argmin(combined_score, axis=None), combined_score.shape)
+
+                #print('yes')
+                if np.arange(prev_counter_p,counter_p)[y] not in pops and np.arange(prev_counter_p,counter_p)[x] not in pops:
+                    # append to whichever is more centered in the current timeblock
+                    center_d = t+window_size/2
+
+                    if np.abs(center_d - np.mean(cur_tt[x])/samplerate+starttime) < np.abs(center_d - np.mean(cur_tt[y])/samplerate+starttime):
+                        stimes_p[np.arange(prev_counter_p,counter_p)[x]] = np.sort(np.concatenate([cur_tt[x],cur_tt[y]])).tolist()
+                        pops.append(np.arange(prev_counter_p,counter_p)[y])
+                    else:
+                        stimes_p[np.arange(prev_counter_p,counter_p)[y]] = np.sort(np.concatenate([cur_tt[x],cur_tt[y]])).tolist()
+                        pops.append(np.arange(prev_counter_p,counter_p)[x])
+
+                    #recompute matrices.
+                    # make three matrices.
+                      # make three matrices.
+                    pdm = np.corrcoef(s_patterns)**2#cdist(s_patterns,s_patterns,'correlation') #distance_matrix(s_patterns,s_patterns).flatten()
+                    isisdm = np.zeros((len(cur_tt),len(cur_tt)))
+                    gapsdm = np.zeros((len(cur_tt),len(cur_tt)))
+
+                    # get a matrix of all the ISI combining scores
+                    for x,_ in enumerate(cur_tt):
+                        for y,_ in enumerate(cur_tt):
+                            # tODO: delete supershort isi intervals that are probs from the same wave.
+                            new_t = np.unique(np.sort(np.concatenate([cur_tt[x],cur_tt[y]])))
+                            isisdm[x,y] = np.std(np.diff(1/np.diff(new_t)))/min(np.std(np.diff(1/np.diff(cur_tt[x]))),np.std(np.diff(1/np.diff(cur_tt[y]))))
+                            gapsdm[x,y] = gapscore(new_t,t,t+window_size)/min(gapscore(cur_tt[x],t,t+window_size),gapscore(cur_tt[y],t,t+window_size))
+                    combined_score = w1*pdm+w2*isisdm+w3*gapsdm
+                    np.fill_diagonal(combined_score,9999)
+                
+                else:
+                    # go to the next x,y
+                    combined_score[x,y] = 1
+
+            x,y = np.unravel_index(np.argmin(combined_score, axis=None), combined_score.shape)
+            while np.arange(prev_counter_p,counter_p)[y] in pops or np.arange(prev_counter_p,counter_p)[x] in pops:
+                combined_score[x,y] = 999999
+                x,y = np.unravel_index(np.argmin(combined_score, axis=None), combined_score.shape)
+    
+
 
             for p in sorted(pops, reverse=True):
                 stimes_p.pop(p)
@@ -529,10 +582,10 @@ def analyse_window(ap,at,ap_n,at_n,tt,maxchans,starttime,endtime,samplerate,int_
                 freqs = np.delete(freqs,p,0)
                 counter_p = counter_p-1
 
-        #plt.figure()
-        #for i,t in enumerate(stimes_p[prev_counter_p:counter_p]):
-        #    plt.plot(t,i*np.ones(len(t)),'o')
-        #plt.show()
+        plt.figure()
+        for i,t in enumerate(stimes_p[prev_counter_p:counter_p]):
+            plt.plot(t,i*np.ones(len(t)),'o')
+        plt.show()
 
         '''
         for i,cl in enumerate(np.unique(pc[pc!=-1])):
@@ -1046,9 +1099,9 @@ if __name__ == '__main__':
 
     for master_file,slave_file in zip(m_files,s_files):
         if master_file[-1] == '/':
-            save_folder = 'data/t3/' + master_file.split('/')[-2] + '/'
+            save_folder = 'data/debug/' + master_file.split('/')[-2] + '/'
         else:
-            save_folder = 'data/t3/' + master_file.split('/')[-1] + '/'
+            save_folder = 'data/debug/' + master_file.split('/')[-1] + '/'
 
         starttime = 0
         
@@ -1059,6 +1112,8 @@ if __name__ == '__main__':
         else:
             # make dir.
             os.mkdir(save_folder)
+
+        starttime=0
 
 
         #starttime = 74#71 #74
