@@ -431,7 +431,9 @@ if __name__ == '__main__':
             break
 
         file_count = int(np.floor(len([n for n in os.listdir(path+subdir) if ('.npz' in n) and ('traces' not in n)])/2))
-        save_name = 'traces_%i.npz'%file_count
+        save_name = 'traces_%i.pkl'%file_count
+
+        print(path+subdir+save_name)
 
         # first check if data already exists.
         if not os.path.exists(path+subdir+save_name):
