@@ -9,6 +9,26 @@ import warnings
 warnings.filterwarnings("ignore")
 
 def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
+    """ Use sliding window of size N and run it over data x using function func.
+
+    Parameters
+    ----------
+    x : numpy array
+        Input data.
+    N : int
+        Sliding window size.
+    func : python function (optional)
+        Function to comute on sliding window.
+        Defaults to np.nanmedian.
+    loc : string (optional)
+        Centering of sliding window. Options are: 'right', 'left' and 'middle'.
+        Defaults to 'middle'
+
+    Returns
+    -------
+    results : numpy array
+        Modified array of size x.shape.
+    """
 
     if len(x)<N+1:
         return np.ones(len(x))*func(x)
@@ -31,16 +51,63 @@ def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
 
     return result
 
-def fill_gaps(st,isi,N=200):
+def fill_gaps(st,isi,N=200, max_ratio=1.5, min_freq=10):
+    """ Fill gaps in EOD trace by computing the running median and setting all values above the average median ISI to NaN.
+
+    Parameters
+    ----------
+    st : dict
+        Dictionary with EOD times for each fish cluster in seconds.
+    isi : dict
+        Dictionary with EOD intervals for each fish cluster in seconds.
+    N : int (optional)
+        Running median window size.
+        Defaults to 200.
+    max_ratio : float
+        Values of max_ratio*average median_ISI are set to NaN.
+        Defaults to 1.5.
+    min_freq : float
+        Minimum EOD rate.
+        Defaults to 10.
+
+    Returns
+    -------
+    st : dict
+        Dictionary with EOD times for each fish cluster in seconds.
+    isi : dict
+        Dictionary with EOD intervals for each fish cluster in seconds, where gaps have been set to NaN.
+    """
     
     # just delete all isis above a certain number
-    val4 = RunningFunc(isi,N)
-    isi[isi>val4*1.5] = np.nan
-    isi[1/(isi)<10] = np.nan
+    running_median = RunningFunc(isi,N)
+    isi[isi>running_median*max_ratio] = np.nan
+    isi[1/(isi)<min_freq] = np.nan
 
-    return st, isi, val4
+    return st, isi
 
 def delete_artifacts(st,isi,positions,N=100):
+    """ Delete unrealistic inter-EOD intervals from trace based on running median.
+
+    Parameters
+    ----------
+    st : dict
+        Dictionary with EOD times for each fish cluster in seconds.
+    isi : dict
+        Dictionary with EOD intervals for each fish cluster in seconds.
+    positions : dict
+        Dictionary with fish position coordinates for each fish cluster.
+    N : int
+        Running median window size.
+
+    Returns
+    -------
+    st : dict
+        Dictionary with EOD times for each fish cluster in seconds.
+    isi : dict
+        Dictionary with EOD intervals for each fish cluster in seconds.
+    positions : dict
+        Dictionary with fish position coordinates for each fish cluster.
+    """
 
     runmed = RunningFunc(isi,N)
     
@@ -62,14 +129,38 @@ def delete_artifacts(st,isi,positions,N=100):
         
         isi = np.diff(st)
         
-    return st, isi, runmed, positions
+    return st, isi, positions
                     
 def smooth_traces(spiketimes,isi,N):
+    """ Smooth EOD rate traces by taking a running median with window size N, 
+    and create an array spiketimes and EOD intervals without gaps, so an interpolated version of the rate trace can be plotted.
+
+    Parameters
+    ----------
+    spiketimes : dict
+        Dictionary with EOD times for each fish cluster in seconds.
+    isi : dict
+        Dictionary with EOD intervals for each fish cluster in seconds.
+    N : int
+        Running median window size.
+
+    Returns
+    -------
+    stsDict : dict
+        Dictionary with EOD times for each fish cluster in seconds with NaNs.
+    fstsDict : dict
+        Dictionary with EOD times for each fish cluster in seconds without NaNs.
+    isisDict : dict
+        Dictionary with EOD intervals for each fish cluster in seconds with NaNs.
+    fisisDict : dict
+        Dictionary with EOD intervals for each fish cluster in seconds without NaNs.
+
+    """
         
-    isisList = {}
-    stsList = {}
-    fisisList = {}
-    fstsList = {}
+    isisDict = {}
+    stsDict = {}
+    fisisDict = {}
+    fstsDict = {}
     
     for i,sti in enumerate(spiketimes.keys()):
         if len(spiketimes[sti])>0:
@@ -82,20 +173,40 @@ def smooth_traces(spiketimes,isi,N):
 
             isis[to_nan_idx] = np.nan
 
-            fisisList[sti] = 1/(isis)
-            fstsList[sti] = spiketimes[sti]
+            fisisDict[sti] = 1/(isis)
+            fstsDict[sti] = spiketimes[sti]
 
             isis[del_idx.astype('int')] = np.nan
 
-            isisList[sti] = 1/(isis)
-            stsList[sti] = spiketimes[sti]
+            isisDict[sti] = 1/(isis)
+            stsDict[sti] = spiketimes[sti]
     
-    return stsList,fstsList,isisList,fisisList
+    return stsDict,fstsDict,isisDict,fisisDict
 
 
 def load_data(fi, file_count, path):
+    """ Load data from .npz pulsetracking files per minumte of data and concatenate them.
 
-    # TODO change to using np arrays??
+        Parameters
+        ----------
+        fi : int
+            Number of first file.
+        file_count : int
+            Number of total files to load.
+        path : string
+            Path to data
+
+        Returns
+        -------
+        st : dict
+            Dictionary with EOD times in seconds for each fish cluster.
+        positions : dict
+            Dictionary with fish position coordinates for each fish cluster.
+        et : numpy array
+            Eel EOD times in seconds.
+        ep : 2D numpy array
+            Eel position estimate coordinates.
+    """
     et = []
     ep = []
     st = {}
@@ -134,6 +245,30 @@ def load_data(fi, file_count, path):
     return st, positions, np.array(et), ep
 
 def process_traces(st,positions):
+    """ Process raw EOD rate traces.
+        Fill gaps, delete artefacts and smooth the traces.
+
+        Parameters
+        ----------
+        st : dict
+            Dictionary with EOD times in seconds for each fish cluster.
+        positions : dict
+            Dictionary with fish position coordinates for each fish cluster.
+
+        Returns
+        -------
+        sts : dict
+            Dictionary with EOD times for each fish cluster in seconds with NaNs.
+        fsts : dict
+            Dictionary with EOD times for each fish cluster in seconds without NaNs.
+        isis : dict
+            Dictionary with EOD intervals for each fish cluster in seconds with NaNs.
+        fisis : dict
+            Dictionary with EOD intervals for each fish cluster in seconds without NaNs.
+        positions : dict
+            Dictionary with fish position coordinates.
+
+    """
     spti = {}
     isis = {}
     rav = {}
@@ -148,17 +283,52 @@ def process_traces(st,positions):
         cp = positions[sti]
         cisi = np.diff(cst)
         if len(cisi) > 0:
-            spti[sti], isis[sti], rav[sti], positions[sti] = delete_artifacts(cst,cisi,cp)
-            nspti[sti], nisis[sti], nrav[sti] = fill_gaps(spti[sti][:-1],np.diff(spti[sti]))
+            spti[sti], isis[sti], positions[sti] = delete_artifacts(cst,cisi,cp)
+            nspti[sti], nisis[sti] = fill_gaps(spti[sti][:-1],np.diff(spti[sti]))
 
     print('smooting traces')
 
     return smooth_traces(nspti,nisis,5), positions
 
 
-# save and plot?
 def plot_traces(sts, fsts, isis, fisis, positions, et, ep, fi, file_count, dati, path, N=500, fmin=0, fmax=120):
-    # plot the averaged version on top of this in the same colors?
+    """ Plot and save the processed EOD rate traces and their position estimates for each minute of data.
+
+        Parameters
+        ----------
+        sts : dict
+            Dictionary with EOD times for each fish cluster in seconds with NaNs.
+        fsts : dict
+            Dictionary with EOD times for each fish cluster in seconds without NaNs.
+        isis : dict
+            Dictionary with EOD intervals for each fish cluster in seconds with NaNs.
+        fisis : dict
+            Dictionary with EOD intervals for each fish cluster in seconds without NaNs.
+        positions : dict
+            Dictionary with fish position coordinates.
+        et : numpy array
+            Eel EOD times in seconds.
+        ep : 2D numpy array
+            Eel position estimates in coordinates.
+        fi : int
+            First timepoint that was analysed (in minutes).
+        file_count : int
+            Amount of minutes of data.
+        dati : datetime object
+            Date and time at start of recording.
+        path : string
+            Path to save output file to.
+        N : int (optional)
+            Minimum ammount of EODs that should be in an EOD cluster to be plot with colour and alpha.
+            Anything below this number is plotted transparantly in black.
+            Defaults to 500.
+        fmin : float (optional)
+            Minimum EOD rate to display on graph.
+            Defaults to 0.
+        fmax : float (optional)
+            Maximum EOD rate to display on graph.
+            Defaults to 130.
+    """
 
     cmap = plt.get_cmap("tab10")
 
