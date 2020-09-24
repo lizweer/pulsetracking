@@ -442,7 +442,7 @@ if __name__ == '__main__':
         else:
             data = pkl.load(open(path+subdir+save_name, 'rb'))
             sts, fsts, isis, fisis, positions, et, ep = data['sts'], data['fsts'], data['isis'], data['fisis'], data['positions'], data['et'], data['ep']
-            print('plotting data exists! delete it is you wish to recreate results')
+            print('plotting data exists! delete it if you wish to recreate results')
 
         plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
 
