@@ -129,7 +129,9 @@ def load_data(fi, file_count, path):
                 st[k] = t[clusters==k]
                 positions[k] = pos[clusters==k]
 
-    return st, positions, np.array(et), np.vstack(ep)
+    if len(ep)>0:
+        ep = np.vstack(ep)
+    return st, positions, np.array(et), ep
 
 def process_traces(st,positions):
     spti = {}
@@ -246,6 +248,8 @@ if __name__ == '__main__':
         path = '../data/results/'
     else:
         path = sys.argv[1]
+
+    print(path)
 
     # go through data files and analyse them. If data already exists in save_path, continue analysis where it left off.
     subdirs = ['2019-10-17-12_36/', '2019-10-17-19_48/',  '2019-10-18-09_52/',  '2019-10-19-08_39/',  '2019-10-20-08_30/']

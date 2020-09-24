@@ -30,7 +30,6 @@ def zero_runs(a):
     Returns
     -------
     ranges : numpy array
-
     """
     iszero = np.concatenate(([0], np.equal(a, 0).view(np.int8), [0]))
     absdiff = np.abs(np.diff(iszero))
@@ -56,7 +55,7 @@ def get_position(spatial_pattern,grid_shape=(4,8),n_elec=2):
     Returns
     -------
     positions : numpy array
-        A 2D position estimate for each input patter, 
+        A 2D position estimate for each input pattern, 
         given in electrode coordinates.
     """
     spatial_pattern[~np.isfinite(spatial_pattern)] = 0
@@ -67,14 +66,13 @@ def get_position(spatial_pattern,grid_shape=(4,8),n_elec=2):
     return np.asarray(center_of_mass((spatial_pattern*mask).reshape(grid_shape)))
 
 def load_channels(filepath,starttime,endtime,verbose=0):
+    """ Load data from all channels for a given timeperiod.
     
-    # TODO: instead of two files, have list of filenames.
-
-    """Load data from all channels for a given timeperiod.
     Parameters
     ----------
     filepaths : string or list of strings
-        Paths to the data of all channels for one recording.
+        Paths to the data of all channels for one recording. 
+        If the channel data is in multiple files, enter a list of files.
     starttime : float or int
         Starttime for extracting data in seconds.
     endtime : float or int
@@ -150,25 +148,44 @@ def extract_eod_times(data, samplerate, interp_freq, min_peakwidth, max_peakwidt
 
     Parameters
     ----------
-    data : 2D numpy array
-        Electric activity on all
-    samplerate
-    interp_freq
-    min_peakwidth
-    max_peakwidth
-    width_factor
+    data : 2D numpy array (t,n_electrodes)
+        Electric activity on all electrodes.
+    samplerate : float
+        Data samplerate
+    interp_freq : float
+        Interpolation frequency. Interpolate the data to this sampling frequency.
+        Chosen number should be high enough so EODs can be properly aligned.
+    min_peakwidth : float
+        Minimum peak-trough width in seconds. 
+        Choose lower bound of the width of a single EOD phase of species of interest 
+        to reduce computation time and improve results. 
+    max_peakwidth : float
+        Maximum peak-trough width in seconds.
+        Choose upper bound of the width of a single EOD phase of species of interest 
+        to reduce computation time and improve results.
+    width_factor : int or float
+        Width factor for extrating peaks (see pulses.extract_eod_times())
+    
     verbose : int (optional)
+        Verbosity level.
+        Defaults to zero.
 
     Returns
     -------
-    x_peaks
-    x_troughs
-    eod_heights
-    eod_widths
-    channels
-    all_int_data
-    int_samplerate
-    interp_f
+    x_peaks : 1D numpy array of ints
+        EOD peak indices.
+    x_troughs : 1D numpy array of ints
+        EOD trough indices.
+    eod_heights : 1D numpy array of floats
+        EOD peak to trough heights.
+    eod_widths : 1D numpy array of ints
+        EOD peak to trough widths in indices.
+    channels : 1D numpy array of ints
+        Channel number where peak and trough was found.
+    all_int_data : 2D numpy array of floats (t, n_elec)
+        Interpolated channel data.
+    interp_f : float
+        Interpolation factor (interpolation samplerate / original samplerate)
     """
 
     all_int_data = np.array([])
@@ -182,7 +199,7 @@ def extract_eod_times(data, samplerate, interp_freq, min_peakwidth, max_peakwidt
     for i in range(data.shape[1]):
         y = data[:,i]
         
-        x_peak, x_trough, eod_hight, eod_width, int_samplerate, int_data, interp_f, _ = lp.extract_eod_times(y, samplerate, width_factor=width_factor, interp_freq=interp_freq, min_peakwidth=min_peakwidth, max_peakwidth=max_peakwidth)
+        x_peak, x_trough, eod_hight, eod_width, _, int_data, interp_f, _ = lp.extract_eod_times(y, samplerate, width_factor=width_factor, interp_freq=interp_freq, min_peakwidth=min_peakwidth, max_peakwidth=max_peakwidth)
 
         if len(all_int_data)>0:
             all_int_data = np.vstack([all_int_data,int_data])
@@ -205,19 +222,25 @@ def extract_eod_times(data, samplerate, interp_freq, min_peakwidth, max_peakwidt
     if verbose>0:
         print('%i potential EOD times extracted'%len(a))
 
-    return x_peaks[a], x_troughs[a], eod_hights[a], eod_widths[a], channels[a], all_int_data, int_samplerate, interp_f
-
-
-### functions for extracting features
-
-
-### functions for discarding artefacts and wavefish
-
-
-## functions for extracting eel times
-# TODO: make this a numba function.
+    return x_peaks[a], x_troughs[a], eod_hights[a], eod_widths[a], channels[a], all_int_data, interp_f
 
 def extract_eel_times(data,verbose=0):
+    """ Extract eeltimes by checking for saturated data. 
+        Data is saturated when the derivative == 0 for more than 5 samples.
+
+        Parameters
+        ----------
+        data : 2D numpy array (t,n_elec)
+            Electrode data.
+        verbose : int (optional)
+            Verbosity level.
+            Defaults to zero.
+
+        Returns
+        -------
+        all_eel_times : list of ints
+            Indices with eel EODs.
+    """
     all_eel_times = []
     for i in range(data.shape[1]):
         y = data[:,i]
@@ -236,43 +259,116 @@ def extract_eel_times(data,verbose=0):
     return np.round(all_eel_times)
 
 
-def plot_snippet(eods,x=None,ct=[],cp=[],cc=[],color='k'):
-    
+def plot_snippet(eods, grid_shape, color='k', alpha=1):
+    """ Plot snippet of data on all channels.
+
+        Parameters
+        ----------
+        eods : 2D numpy array (n_elec,t)
+            Numpy array with a snippet of data for all channels.
+        grid_shape : tuple
+            Shape of grid.
+        color : matplotlib color (optional)
+            Defaults to 'k'.
+        alpha : float (optional)
+            Alpha value of snippet plots.
+            Defaults to 1.
+    """
     for i in range(eods.shape[0]):
         plt.subplot(4,8,i+1)
-        if x is None:
-            x = np.arange(len(eods[i]))
-        plt.plot(x,eods[i],color=color,alpha=0.25)
-        
-        if i in cc:
-            try:
-                plt.plot(ct[cc==i],eods[i,ct[cc==i]-x[0]],'x',color='b')
-            except:
-                pass
-            try:
-                plt.plot(cp[cc==i],eods[i,cp[cc==i]-x[0]],'x',color='r')
-            except:
-                pass
-
+        plt.plot(eods[i],color=color,alpha=alpha)
         plt.ylim([np.min(eods),np.max(eods)])
         plt.axis('off')
 
-def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,data,nchannels,
+def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,data,
     x_peaks,x_troughs,eod_width,channels,eod_hights,cutwidth,window_size,window_dt,min_samples,
     max_clus,min_correlation=0.99,min_correlation_moving=0.75,coverage_factor=0.9,verbose=0,plot_level=0):                  
-    
+    """ Analyse all windows in one block of recording data.
+
+    Parameters
+    ----------
+    spatial_patterns : 2D numpy array
+        Spatial patterns for each EOD.
+    ts : 1D numpy array
+        Timepoints for each detected EOD.
+    maxchans : 1D numpy array
+        Channel with maximum activity for each detected EOD.
+    starttime : float
+        Starttime of analysis block in seconds.
+    endtime : float
+        Endtime of analysis block in seconds.
+    samplerate : float
+        Samplerate of input data.
+    data : 2D numpy array (n_elec, t)
+        Data on all electrodes.
+    x_peaks : 1D numpy array of ints
+        Indices of EOD peaks
+    x_troughs : 1D numpy array of ints
+        Indices of EOD troughs.
+    eod_width : 1D numpy array of ints
+        Width (in samples) between each peak-trough pair.
+    channels : 1D numpy array of ints
+        Channel on which x_peaks and x_troughs are found.
+    eod_hights : 1D numpy array of floats
+        EOD hights (difference between peak and trough amplitude).
+    cutwidth : float
+        Width used for extracting EOD snippets in seconds.
+    window_size : float
+        Size of single analysis window in seconds.
+    window_dt : float
+        Sliding window stepsize in seconds.
+    min_samples : int
+        Minimum amount of EODs that can form a cluster within window_size. 
+        Choose a value that is species specific. 
+        e.g. a species with a minimum EOD rate of 15Hz would have a minimum of 15 EODs in a window of 1s.
+    max_clus : int
+        Maximum amount of clusters that are expected within one window.
+        This variable is only used to allocate the right amount of space for storing the clusters.
+    min_correlation : float (optional)
+        Minimum pearson correlation between clusters to be part of the same cluster.
+        This value is used to merge clusters that are similar.
+        Defaults to 0.99.
+    min_correlation_moving : float (optional)
+        Mimimum pearson correlation between clusters of moving fish to belong to the same cluster.
+        This value is used in combination with the coverage factor to connect EOD clusters of moving fish.
+        Defaults to 0.75.
+    coverage_factor : float (optional)
+        Two EOD clusters of a moving fish are merged if the EOD coverage of the analysis window is equal 
+        to the coverages of the separate fish combined times the coverage factor.
+        Defaults to 0.9.
+    verbose : int  (optional)
+        Verbosity level.
+        Defaults to 0.
+    plot_level : int (optional)
+        If plot_level > 0, the clustered EOD spiketimes and averaged spatial patterns are plot for each analysis window.
+        Defaults to zero.
+
+    Returns
+    -------
+    mean_eods : 2D numpy array (n_clusters, snip_length*n_elec)
+        Mean eod snippets for each EOD cluster in each analysis window.
+    times : 1D numpy array of floats (n_clusters)
+        Starting times in seconds of analysis windows.
+    spiketimes : list of numpy arrays (n_clusters)
+        All EOD times for each cluster in each analysis window.
+    freqs : 1D numpy array of floats
+        Average EOD rates for each cluster in each analysis window.
+    """
+
     # initialize storage arrays   
-    mean_eods = np.zeros((int(max_clus*(endtime-starttime)/window_dt), int(nchannels*cutwidth*samplerate)))
+    mean_eods = np.zeros((int(max_clus*(endtime-starttime)/window_dt), int(data.shape[0]*cutwidth*samplerate)))
     times = np.zeros(int(max_clus*(endtime-starttime)/window_dt))
     freqs = np.zeros(int(max_clus*(endtime-starttime)/window_dt))
     spiketimes = []
     counter_c = 0
     
+    # sliding window
     for t in np.arange(starttime,endtime-window_size+window_dt,window_dt):
 
         # remember where analysis started for this timeblock
         prev_counter_c = counter_c
 
+        # select values within window
         sl = (np.where((ts/samplerate+starttime>=t)&(ts/samplerate+starttime<t+window_size))[0]).astype('int')
         ctt = ts[sl]
         s_patterns = spatial_patterns[sl]
@@ -280,14 +376,15 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
         if len(s_patterns)<min_samples:
             continue
 
-        #take root of spatial patterns
         s_patterns[np.isnan(s_patterns)] = 0
+        
+        # cluster
         pc = OPTICS(min_samples=min_samples).fit(s_patterns).labels_
 
+        # go through each cluster
         for cl in np.unique(pc[pc!=-1]):
             
-            # get the maxchan of this cluster
-            # not by the average but the most prominent maxchan??
+            # get the most prominent maxchannel of this cluster and center snippets around its peak and trough
             all_mc, counts = np.unique(maxchans[sl][pc==cl],return_counts=True)
             maxchan = all_mc[np.argmax(counts)]
             mean_snip_p = []
@@ -295,7 +392,6 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
 
             for ct in ctt[pc==cl]:
                 # check out surrounding peaks, troughs, and hights.
-                # but I should somehow center around the highest peak?
                 eod_time = ct                
                 snip = (((x_peaks>(eod_time-eod_width*2)) & (x_peaks<(eod_time+eod_width*2)) & (x_troughs>(eod_time-eod_width*6)) & (x_troughs<(eod_time+eod_width*6))) | ((x_troughs>(eod_time-eod_width*2)) & (x_troughs<(eod_time+eod_width*2)) & (x_peaks>(eod_time-eod_width*6)) & (x_peaks<(eod_time+eod_width*6))))
   
@@ -305,8 +401,8 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
                 ch = eod_hights[snip]
 
                 if maxchan in cc:
-                    p_eods = np.zeros((nchannels,int(cutwidth*samplerate)))
-                    t_eods = np.zeros((nchannels,int(cutwidth*samplerate)))
+                    p_eods = np.zeros((data.shape[0],int(cutwidth*samplerate)))
+                    t_eods = np.zeros((data.shape[0],int(cutwidth*samplerate)))
                     # center around biggest pt pair.
                     p_eods = data[:, int(cp[cc==maxchan][np.argmax(ch[cc==maxchan])]-cutwidth*samplerate/2):int(cp[cc==maxchan][np.argmax(ch[cc==maxchan])]+cutwidth*samplerate/2)]
                     p_eods[np.isnan(p_eods)] = 0 # set nan to zero as broken elctrodes give NaN
@@ -318,17 +414,20 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
             mean_snip_p = np.vstack(mean_snip_p)
             mean_snip_t = np.vstack(mean_snip_t)
             
+            # choose the centering which results in the most homogenously aligned snippets
             if np.mean(np.std(mean_snip_p,axis=0))<np.mean(np.std(mean_snip_t,axis=0)):
-                mean_snip = np.mean(mean_snip_p,axis=0).reshape(nchannels,-1)
+                mean_snip = np.mean(mean_snip_p,axis=0).reshape(data.shape[0],-1)
             else:
-                mean_snip = np.mean(mean_snip_t,axis=0).reshape(nchannels,-1)
+                mean_snip = np.mean(mean_snip_t,axis=0).reshape(data.shape[0],-1)
 
+            # now add the cluster variables to the storage
             mean_eods[counter_c] = mean_snip.flatten()
             times[counter_c] = t
             spiketimes.append(ts[sl][pc==cl]/samplerate+starttime)
             freqs[counter_c] = np.median(1/np.diff(ts[sl][pc==cl]/samplerate))
             counter_c += 1
-               
+        
+        # plot clusters
         if plot_level > 0:
             gs = gridspec.GridSpec(counter_c - prev_counter_c,3)
             fig = plt.figure()
@@ -338,7 +437,7 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
             ax.set_xlim([t,t+window_size])
             ax.axis('off')
 
-            s_patterns = np.std(mean_eods[prev_counter_c:counter_c].reshape(mean_eods[prev_counter_c:counter_c].shape[0],nchannels,-1),axis=2)**(1/3)
+            s_patterns = np.std(mean_eods[prev_counter_c:counter_c].reshape(mean_eods[prev_counter_c:counter_c].shape[0],data.shape[0],-1),axis=2)**(1/3)
             for i,pattern in enumerate(s_patterns):
                 ax = fig.add_subplot(gs[i,1])
                 ax.imshow(pattern.reshape(4,8),vmin=np.min(s_patterns),vmax=np.max(s_patterns))
@@ -352,6 +451,7 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
             plt.title('t = %.2f'%t)
             print('---------------------')
         
+        # check out this analysis window and see if anything can be merged
         cur_freqs = freqs[prev_counter_c:counter_c]
         cur_mpe = mean_eods[prev_counter_c:counter_c]
         cur_tt = np.array(spiketimes[prev_counter_c:counter_c])
@@ -359,7 +459,7 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
         if len(cur_mpe)>1:
 
             # first only merge stationary fish, correlation should be high.
-            s_patterns = np.std(cur_mpe.reshape(cur_mpe.shape[0],nchannels,-1),axis=2)**(1/3)
+            s_patterns = np.std(cur_mpe.reshape(cur_mpe.shape[0],data.shape[0],-1),axis=2)**(1/3)
             cors = np.corrcoef(s_patterns)
             np.fill_diagonal(cors,0)
             pops=[]
@@ -424,6 +524,7 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
                         if verbose>0 or plot_level>0:
                             print('merging cluster %i and %i with correlation of %.3f and coverage scores of %.3f + %.3f > %.2f*%.3f'%(x,y,cors[x,y],coverage_x,coverage_y,coverage_factor,coverage_merge))
 
+            # remove all duplicates
             for p in sorted(pops, reverse=True):
                 spiketimes.pop(p)
                 times = np.delete(times,p,0)
@@ -441,13 +542,85 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
     min_pt_width=0.8e-4, max_pt_width=1.7e-4, cutwidth=7.5e-4, width_factor=3, LFR_threshold=0.7, max_EOD_phases=4, window_size=1, 
     window_dt=0.25, block_size=5, min_samples=10, min_correlation_block=0.5, max_clus=15, max_freq=130, save_block=60, verbose=0, plot_level=0):
 
-    '''
-    TODO: write that min_pt_width and max_pt_width is species dependent
+    """ Load raw grid recording, analyse for EOD clusters, and track them through time.
 
-    TODO: write Peter email on monday on the milestone. evidence: git/docs/thunderfish -> pulsefish annotation.
+    Parameters
+    ----------
+    file_paths : string or list of strings
+        Path (or paths) to raw electrode grid data. If channel data is in multiple files (e.g. due to using multiple DAQ boards),
+        enter a list of paths to these files.
+    save_path : string
+        Path to save data to.
+    starttime : float (optional)
+        Where to start the analysis wrt the beginning of the raw data file (in seconds).
+        Defaults to 0.
+    endtime : float (optional)
+        Where to end the analysis wrt the beginning of the raw data file (in seconds).
+        Defaults to 60*60*48.
+    grid_shape : tuple of ints (optional)
+        Grid shape (x,y).
+        Defaults to (4,8)
+    interp_freq : float (optional)
+        Interpolation frequency. Choose a value so that the EODs of the species of interest are depicted smoothly.
+        This frequency is used for proper snippet alignment and artefact discarding.
+        Defaults to 200 000 Hz.
+    min_pt_width : float (optional)
+        Minimum width (in seconds) between an EOD peak and trough for it to be regarded for the analysis. This value is species dependent.
+        Choose and accurate value to speed up computation time and improve results.
+        Defaults to 0.8e-4 s.
+    max_pt_width : float (optional)
+        Maximum width (in seconds) between an EOD peak and trough for it to be regarded for the analysis. This value is species dependent.
+        Choose and accurate value to speed up computation time and improve results.
+        Defaults to 1.7e-4 s.
+    cutwidth : float (optional)
+        Width (in seconds) that is used for extracting EOD snippets.
+        Defaults to 7.5e-4 s.
+    width_factor : float (optional)
+        Width factor describing the maximum distance between peak-trough pairs (the p-t pair width*width_factor),
+        for them to be assigned to the same EOD.
+        Defaults to 3. 
+    LFR_threshold : float (optional)
+        Low frequency ratio threshold. The minimum ratio of low frequency power (first half of power spectrum) 
+        for a snippet to be considered an EOD, and not an artefact.
+        Defaults to 0.7.
+    max_EOD_phases : int (optional)
+        Maximum nr of EOD phases of the species of interest. Signals with more phases are discarded.
+        Defaults to 4.
+    window_size : float (optional)
+        Size of single clustering window in seconds. 
+        Choose a value so that at least min_samples EODs are present within this window to cluster.
+        Defaults to 1.
+    window_dt : float (optional)
+        Clustering sliding window step size.
+        Defaults to 0.25.
+    block_size : float (optional)
+        Analysis block size in seconds. Data is loaded and saved for each block.
+        This amount *3 is the total time in seconds that is used for each step that combines/tracks the clusters.
+        Defaults to 5.
+    min_samples : int (optional)
+        Minimum amount of samples for forming a cluster. 
+        Choose a value based on the minimum EOD rate of the species of interest times the analysis window size.
+        Defaults to 10.
+    min_correlation_block : float (optional)
+        Mimimum correlation between two spatial patterns that is required to connect the cluster blocks.
+        Defaults to 0.5.
+    max_clus : int (optional)
+        Maximum amount of expected clusters at any timepoint. Used to estimate storage size allocation.
+        Defaults to 15.
+    max_freq : float (optional)
+        Maximum EOD rate of species of interest. Used to estimate storage size allocation.
+    save_block : float (optional)
+        Size of data to analyse before saving the data (in seconds).
+        Defaults to 60 seconds.
+    verbose : int (optional)
+        Verbosity level.
+        Defaults to zero.
+    plot_level : int (optional)
+        Plot level. Set to 1 to plot visualization of each connection step of block_size.
+        Set to 2 to additionaly plot the EOD times and spatial patterns of each cluster within one analysis window.
+        Defaults to zero.
+    """
     
-    '''
-
     # check if path for previous path exists, if it does, use those clusters and empty them.
     if verbose>0:
         print("looking for this:")
@@ -518,8 +691,10 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
         eel_times.extend((cur_eeltimes*dt+starttime).tolist())
         
         # extract eod timepoints and interpolated data
-        x_peaks, x_troughs, eod_hights, eod_widths, channels, data, samplerate, interp_factor = extract_eod_times(data, 1/dt, interp_freq, min_pt_width, max_pt_width, cutwidth/min_pt_width, verbose=verbose-1)
+        x_peaks, x_troughs, eod_hights, eod_widths, channels, data, interp_factor = extract_eod_times(data, 1/dt, interp_freq, min_pt_width, max_pt_width, cutwidth/min_pt_width, verbose=verbose-1)
+        
         # set new dt for interpolated data
+        samplerate = interp_freq
         dt = 1/samplerate
 
         # initialize storage for eods and timepoints for the current analysis block
@@ -608,7 +783,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
         else:
             # analyse the new window of EODs
             mean_eods, times, spiketimes, freqs = analyse_window(spatial_patterns, ts, max_channels, starttime, endtime, 
-                samplerate, data, grid_shape[0]*grid_shape[1], x_peaks, x_troughs, max_pt_width*samplerate, channels, eod_hights, cutwidth, window_size, window_dt, 
+                samplerate, data, x_peaks, x_troughs, max_pt_width*samplerate, channels, eod_hights, cutwidth, window_size, window_dt, 
                 min_samples, max_clus, verbose=verbose-1, plot_level=plot_level-1)
 
             # concatenate previous values.
