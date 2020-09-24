@@ -242,7 +242,10 @@ if __name__ == '__main__':
     # go through data and compute functions.
 
     # path to data
-    path = '../data/results/'
+    if len(sys.argv) == 1:
+        path = '../data/results/'
+    else:
+        path = sys.argv[1]
 
     # go through data files and analyse them. If data already exists in save_path, continue analysis where it left off.
     subdirs = ['2019-10-17-12_36/', '2019-10-17-19_48/',  '2019-10-18-09_52/',  '2019-10-19-08_39/',  '2019-10-20-08_30/']
