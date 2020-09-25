@@ -275,7 +275,7 @@ def plot_snippet(eods, grid_shape, color='k', alpha=1):
             Defaults to 1.
     """
     for i in range(eods.shape[0]):
-        plt.subplot(4,8,i+1)
+        plt.subplot(grid_shape[0],grid_shape[1],i+1)
         plt.plot(eods[i],color=color,alpha=alpha)
         plt.ylim([np.min(eods),np.max(eods)])
         plt.axis('off')
@@ -283,7 +283,7 @@ def plot_snippet(eods, grid_shape, color='k', alpha=1):
 def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,data,
     x_peaks,x_troughs,eod_width,channels,eod_hights,cutwidth,window_size,window_dt,min_samples,
     max_clus,min_correlation=0.99,min_correlation_moving=0.75,coverage_factor=0.9,verbose=0,plot_level=0):                  
-    """ Analyse all windows in one block of recording data.
+    """ Cluster EODs in all windows in one block of recording data.
 
     Parameters
     ----------
@@ -440,7 +440,7 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
             s_patterns = np.std(mean_eods[prev_counter_c:counter_c].reshape(mean_eods[prev_counter_c:counter_c].shape[0],data.shape[0],-1),axis=2)**(1/3)
             for i,pattern in enumerate(s_patterns):
                 ax = fig.add_subplot(gs[i,1])
-                ax.imshow(pattern.reshape(4,8),vmin=np.min(s_patterns),vmax=np.max(s_patterns))
+                ax.imshow(pattern.reshape(grid_shape),vmin=np.min(s_patterns),vmax=np.max(s_patterns))
                 ax.axis('off')
                 ax.set_title(i)
 
@@ -542,7 +542,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
     min_pt_width=0.8e-4, max_pt_width=1.7e-4, cutwidth=7.5e-4, width_factor=3, LFR_threshold=0.7, max_EOD_phases=4, window_size=1, 
     window_dt=0.25, block_size=5, min_samples=10, min_correlation_block=0.5, max_clus=15, max_freq=130, save_block=60, verbose=0, plot_level=0):
 
-    """ Load raw grid recording, analyse for EOD clusters, and track them through time.
+    """ Load raw grid recording, analyse for EOD clusters, track them through time, and save data to save_path.
 
     Parameters
     ----------
@@ -729,14 +729,12 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
             if len(ch)>1 and np.min(ch)/np.max(ch) > 0.25:
                 continue
 
-            # TODO: only use grid shape for position estimates, get nr of electrodes from data.
-
             # create EOD height pattern            
-            h_pattern = np.zeros((grid_shape[0]*grid_shape[1]))
+            h_pattern = np.zeros((data.shape[0]))
             h_pattern[cc.astype('int')] = ch
 
             # compute centered EODs. Center around peak of channel with highest EOD.
-            p_eods = np.zeros((grid_shape[0]*grid_shape[1],int(cutwidth*samplerate)))
+            p_eods = np.zeros((data.shape[0],int(cutwidth*samplerate)))
             p_eods = data[:, int(cp[np.argmax(ch)]-samplerate*cutwidth/2):int(cp[np.argmax(ch)]+samplerate*cutwidth/2)]
             p_eods[np.isnan(p_eods)] = 0 # set nan to zero as broken elctrodes give NaN
 
@@ -765,7 +763,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
             # normalize eods and then compute spatial pattern
             p_n, _ = lp.subtract_slope(p_eods,h_pattern.T)
             p_n = (p_n.T - np.mean(p_n,axis=1)).T
-            spatial_patterns[num] = np.std(p_n,axis=1)**(1/3)  # TODO is this one of the things that slows it down?
+            spatial_patterns[num] = np.std(p_n,axis=1)**(1/3)
             num+=1
 
         ts = ts[:num]
@@ -800,7 +798,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
         if len(mean_eods)>0:
 
             # modify patterns so that smaller values are more prominent (inverse relation of r**3)
-            s_patterns = np.std(mean_eods.reshape(mean_eods.shape[0],grid_shape[0]*grid_shape[1],-1),axis=2)**(1/3)
+            s_patterns = np.std(mean_eods.reshape(mean_eods.shape[0],data.shape[0],-1),axis=2)**(1/3)
 
             # spatial distance matrix
             dm_spatial = distance_matrix(s_patterns,s_patterns).flatten()
@@ -889,7 +887,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
             for i,c in enumerate(np.unique(clusters[clusters!=-1])):
                 ax.plot(times[clusters==c],freqs[clusters==c],c=cmap(i),label=c)
                 ax_new = fig.add_subplot(gs[i,1])
-                ax_new.imshow(np.mean(np.var(mean_eods[clusters==c].reshape(mean_eods[clusters==c].shape[0],grid_shape[0]*grid_shape[1],-1),axis=2)**(1/3),axis=0).reshape(4,8))
+                ax_new.imshow(np.mean(np.var(mean_eods[clusters==c].reshape(mean_eods[clusters==c].shape[0],data.shape[0],-1),axis=2)**(1/3),axis=0).reshape(grid_shape))
                 ax_new.axis('off')
                 ax_new.set_title(c)
             ax.legend()
@@ -900,7 +898,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
             for i,c in enumerate(np.unique(clusters[clusters!=-1])):
                 for j,tp in enumerate(times[clusters==c]):
                     ax_new = fig.add_subplot(gs[i,j])
-                    ax_new.imshow((np.var(mean_eods[(clusters==c)&(times==tp)].reshape(grid_shape[0]*grid_shape[1],-1),axis=1)**(1/3)).reshape(4,8))
+                    ax_new.imshow((np.var(mean_eods[(clusters==c)&(times==tp)].reshape(data.shape[0],-1),axis=1)**(1/3)).reshape(grid_shape))
                     ax_new.axis('off')
             plt.tight_layout()
             plt.show()
@@ -923,7 +921,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
 
             ccounter=0
             for i,t in zip((np.where((clusters==c))[0]).astype('int'),times[clusters==c]):
-                all_positions[a_counter+ccounter:a_counter+ccounter+len(spiketimes[i])] = get_position(np.var(mean_eods[(clusters==c)&(times==t)].reshape(32,-1),axis=1))
+                all_positions[a_counter+ccounter:a_counter+ccounter+len(spiketimes[i])] = get_position(np.var(mean_eods[(clusters==c)&(times==t)].reshape(data.shape[0],-1),axis=1))
                 ccounter += len(spiketimes[i])
             a_counter += len(np.unique(cur_stimes))
 
@@ -1027,9 +1025,3 @@ if __name__ == '__main__':
             os.mkdir(save_folder)
 
         get_clusters([path+'master/'+master_file, path+'slave/'+slave_file],save_folder,starttime=starttime*60,verbose=3,plot_level=0)
-
-# README file -> short.
-
-# TODO: readme file for data on kraken.
-# rename hour file.
-# notes: write down how channels are arranged.
