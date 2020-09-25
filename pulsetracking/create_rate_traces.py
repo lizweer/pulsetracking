@@ -436,7 +436,7 @@ if __name__ == '__main__':
             # check if there were other files with shorter traces and delete them
             for n in os.listdir(path+subdir):
                 if 'traces' in n:
-                    os.remove(n)
+                    os.remove(path+subdir+n)
 
             # create data.
             st, positions, et, ep = load_data(0,file_count,path+subdir)
