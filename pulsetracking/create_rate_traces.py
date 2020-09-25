@@ -411,15 +411,12 @@ def plot_traces(sts, fsts, isis, fisis, positions, et, ep, fi, file_count, dati,
 
 if __name__ == '__main__':
 
-    # go through data and compute functions.
-
-    # path to data
+    # the first command line argument is the path to the data.
+    # if no path is given, try the standard path ../data/results/
     if len(sys.argv) == 1:
         path = '../data/results/'
     else:
         path = sys.argv[1]
-
-    print(path)
 
     # go through data files and analyse them. If data already exists in save_path, continue analysis where it left off.
     subdirs = ['2019-10-17-12_36/', '2019-10-17-19_48/',  '2019-10-18-09_52/',  '2019-10-19-08_39/',  '2019-10-20-08_30/']
@@ -433,22 +430,20 @@ if __name__ == '__main__':
         file_count = int(np.floor(len([n for n in os.listdir(path+subdir) if ('.npz' in n) and ('traces' not in n)])/2))
         save_name = 'traces_%i.pkl'%file_count
 
-        print(path+subdir+save_name)
-
         # first check if data already exists.
         if not os.path.exists(path+subdir+save_name):
+
+            # check if there were other files with shorter traces and delete them
+            for n in os.listdir(path+subdir):
+                if 'traces' in n:
+                    os.remove(n)
+
             # create data.
             st, positions, et, ep = load_data(0,file_count,path+subdir)
             (sts, fsts, isis, fisis), positions = process_traces(st,positions)
+            plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
             pkl.dump({'sts':sts, 'fsts':fsts, 'isis':isis, 'fisis':fisis, 'positions':positions, 'et':et, 'ep':ep}, open(path+subdir+save_name,'wb'))
         else:
-            data = pkl.load(open(path+subdir+save_name, 'rb'))
-            sts, fsts, isis, fisis, positions, et, ep = data['sts'], data['fsts'], data['isis'], data['fisis'], data['positions'], data['et'], data['ep']
+            #data = pkl.load(open(path+subdir+save_name, 'rb'))
+            #sts, fsts, isis, fisis, positions, et, ep = data['sts'], data['fsts'], data['isis'], data['fisis'], data['positions'], data['et'], data['ep']
             print('plotting data exists! delete it if you wish to recreate results')
-
-        plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
-
-        # filename should be traces_0-n.npz
-
-        # if not, create it
-        # then plot it (if plots dont exist yet, change fi if they do.)
