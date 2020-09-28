@@ -4,12 +4,11 @@ import matplotlib
 from datetime import datetime, timedelta
 import os, sys
 import pickle as pkl
-from numba import jit
 
 import warnings
 warnings.filterwarnings("ignore")
 
-@jit(nopython=True)
+
 def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
     """ Use sliding window of size N and run it over data x using function func.
 
