@@ -280,7 +280,7 @@ def plot_snippet(eods, grid_shape, color='k', alpha=1):
         plt.ylim([np.min(eods),np.max(eods)])
         plt.axis('off')
 
-def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,data,
+def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,data, grid_shape,
     x_peaks,x_troughs,eod_width,channels,eod_hights,cutwidth,window_size,window_dt,min_samples,
     max_clus,min_correlation=0.99,min_correlation_moving=0.75,coverage_factor=0.9,verbose=0,plot_level=0):                  
     """ Cluster EODs in all windows in one block of recording data.
@@ -301,6 +301,8 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
         Samplerate of input data.
     data : 2D numpy array (n_elec, t)
         Data on all electrodes.
+    grid_shape : tuple
+        Shape of grid (x,y)
     x_peaks : 1D numpy array of ints
         Indices of EOD peaks
     x_troughs : 1D numpy array of ints
@@ -449,7 +451,8 @@ def analyse_window(spatial_patterns,ts,maxchans,starttime,endtime,samplerate,dat
                 pos=ax.imshow(np.corrcoef(s_patterns),vmin=0,vmax=1)
                 fig.colorbar(pos, ax=ax)
             plt.title('t = %.2f'%t)
-            print('---------------------')
+            if verbose>0:
+                print('---------------------')
         
         # check out this analysis window and see if anything can be merged
         cur_freqs = freqs[prev_counter_c:counter_c]
@@ -781,7 +784,7 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
         else:
             # analyse the new window of EODs
             mean_eods, times, spiketimes, freqs = analyse_window(spatial_patterns, ts, max_channels, starttime, endtime, 
-                samplerate, data, x_peaks, x_troughs, max_pt_width*samplerate, channels, eod_hights, cutwidth, window_size, window_dt, 
+                samplerate, data, grid_shape, x_peaks, x_troughs, max_pt_width*samplerate, channels, eod_hights, cutwidth, window_size, window_dt, 
                 min_samples, max_clus, verbose=verbose-1, plot_level=plot_level-1)
 
             # concatenate previous values.
@@ -893,11 +896,11 @@ def get_clusters(file_paths, save_path, starttime=0, endtime=60*60*48, grid_shap
             ax.legend()
             plt.tight_layout()
 
-            gs = gridspec.GridSpec(len(np.unique(clusters[clusters!=-1])),int((block_size*3)/window_dt))
+            gs = gridspec.GridSpec(int((block_size*3)/window_dt),len(np.unique(clusters[clusters!=-1])))
             fig = plt.figure()
             for i,c in enumerate(np.unique(clusters[clusters!=-1])):
                 for j,tp in enumerate(times[clusters==c]):
-                    ax_new = fig.add_subplot(gs[i,j])
+                    ax_new = fig.add_subplot(gs[j,i])
                     ax_new.imshow((np.var(mean_eods[(clusters==c)&(times==tp)].reshape(data.shape[0],-1),axis=1)**(1/3)).reshape(grid_shape))
                     ax_new.axis('off')
             plt.tight_layout()
@@ -1024,4 +1027,4 @@ if __name__ == '__main__':
             # make dir to save results in
             os.mkdir(save_folder)
 
-        get_clusters([path+'master/'+master_file, path+'slave/'+slave_file],save_folder,starttime=starttime*60,verbose=3,plot_level=0)
+        get_clusters([path+'master/'+master_file, path+'slave/'+slave_file],save_folder,starttime=starttime*60,verbose=3,plot_level=0,window_size=1)
