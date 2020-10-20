@@ -8,6 +8,10 @@ import pickle as pkl
 import warnings
 warnings.filterwarnings("ignore")
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> f286f59c9a4db372d116be4b72aeef2b3a7b17a8
 def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
     """ Use sliding window of size N and run it over data x using function func.
 
