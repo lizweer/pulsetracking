@@ -4,12 +4,10 @@ import matplotlib
 from datetime import datetime, timedelta
 import os, sys
 import pickle as pkl
-from numba import jit
 
 import warnings
 warnings.filterwarnings("ignore")
 
-@jit(nopython=True)
 def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
     """ Use sliding window of size N and run it over data x using function func.
 
@@ -446,6 +444,4 @@ if __name__ == '__main__':
             plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
             pkl.dump({'sts':sts, 'fsts':fsts, 'isis':isis, 'fisis':fisis, 'positions':positions, 'et':et, 'ep':ep}, open(path+subdir+save_name,'wb'))
         else:
-            #data = pkl.load(open(path+subdir+save_name, 'rb'))
-            #sts, fsts, isis, fisis, positions, et, ep = data['sts'], data['fsts'], data['isis'], data['fisis'], data['positions'], data['et'], data['ep']
             print('plotting data exists! delete it if you wish to recreate results')

@@ -1011,9 +1011,9 @@ if __name__ == '__main__':
 
     for master_file,slave_file in zip(m_files,s_files):
         if master_file[-1] == '/':
-            save_folder = path+'results/' + master_file.split('/')[-2] + '/'
+            save_folder = path+'results_1.5/' + master_file.split('/')[-2] + '/'
         else:
-            save_folder = path+'results/' + master_file.split('/')[-1] + '/'
+            save_folder = path+'results_1.5/' + master_file.split('/')[-1] + '/'
 
         starttime = 0
         
@@ -1024,4 +1024,4 @@ if __name__ == '__main__':
             # make dir to save results in
             os.mkdir(save_folder)
 
-        get_clusters([path+'master/'+master_file, path+'slave/'+slave_file],save_folder,starttime=starttime*60,verbose=3,plot_level=0)
+        get_clusters([path+'master/'+master_file, path+'slave/'+slave_file],save_folder,starttime=starttime*60,verbose=3,plot_level=0,window_size=1.5)
