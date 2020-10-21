@@ -503,7 +503,7 @@ if __name__ == '__main__':
 
     # go through data files and analyse them. If data already exists in save_path, continue analysis where it left off.
     subdirs = ['2019-10-17-12_36/', '2019-10-17-19_48/',  '2019-10-18-09_52/',  '2019-10-19-08_39/',  '2019-10-20-08_30/']
-    dates = [datetime(2019,10,17,12,36), datetime(2019,10,17,19,48), datetime(2019,10,18,9,52), datetime(2019,10,19,8,39), datetime(2019,10,20,8,30)]
+    dates = [datetime(2019,10,17,13,36), datetime(2019,10,17,19,48), datetime(2019,10,18,9,52), datetime(2019,10,19,8,39), datetime(2019,10,20,8,30)]
 
     for subdir,date in zip(subdirs,dates):
 
@@ -526,9 +526,6 @@ if __name__ == '__main__':
             (sts, fsts, isis, fisis), positions = process_traces(st,positions)
             plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
             pkl.dump({'sts':sts, 'fsts':fsts, 'isis':isis, 'fisis':fisis, 'positions':positions, 'et':et, 'ep':ep}, open(path+subdir+save_name,'wb'))
-
-            # average data for analysis
-            process_traces(positions,sts,isis,fsts,fisis,et,ep, pk_max)
 
         else:
             print('plotting data exists! delete it if you wish to recreate results')

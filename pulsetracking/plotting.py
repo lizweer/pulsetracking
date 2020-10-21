@@ -10,9 +10,6 @@ import os
 import warnings
 warnings.filterwarnings("ignore")
 
-# specify path to results here.
-path = '../data/results/'
-
 def plot_fr_and_grid(path,savepath,dates,ts,dts,colors,N):
 	''' Go through data in path, for given dates, times and durations 
 		and plot both the EODr traces and the fish positions.
@@ -238,8 +235,8 @@ def plot_interaction(path, savepath, date, t, dt, N, cols=[], plot_x=False, keys
 	ax2.spines['right'].set_visible(False)
 
 	if plot_x and plot_y:
-		custom_lines = [lines.Line2D([0], [0], color='r', lw=1),
-	            lines.Line2D([0], [0], color='b', lw=1)]
+		custom_lines = [lines.Line2D([0], [0], color='b', lw=1),
+	            lines.Line2D([0], [0], color='r', lw=1)]
 		ax2.legend(custom_lines,['x','y'])
 
 	plt.tight_layout()
@@ -313,7 +310,7 @@ def plot_distr(t,firing_rates,savepath, cycle=600, dHz=1,fmin=0,fmax=125):
 	ax.spines['right'].set_visible(False)
 	ax.spines['top'].set_visible(False)
 	plt.tight_layout()
-	plt.savefig(savepath+'freq_days.svg',dpi=300)
+	plt.savefig(savepath+'freq_days.png',dpi=300)
 	plt.show()
 
 def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65,cycle=600,fmin=0,fmax=125):
@@ -391,7 +388,7 @@ def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65,cycle=600,fmin=0,f
 
 	ax[1,1].legend((a1,a2,a3),('0-%i Hz'%c1,'%i-%i Hz'%(c1,c2),'%i-110 Hz'%c2))
 	plt.tight_layout()
-	plt.savefig(savepath+'foraging_ratios.svg',dpi=300)
+	plt.savefig(savepath+'foraging_ratios.png',dpi=300)
 	plt.show()
 
 def plot_movement(firing_rates,positions,savepath,c1=40,c2=65):
@@ -456,10 +453,12 @@ def plot_movement(firing_rates,positions,savepath,c1=40,c2=65):
 	    axi.set_yticklabels([])
 	    
 	plt.tight_layout()
-	plt.savefig(savepath+'movement.svg')
+	plt.savefig(savepath+'movement.png')
 	plt.show()
 
 if __name__ == '__main__':
+
+	path = '../data/results/'
 
 	# identify sections of data with nice traces for resting fish here.
 	# for identifying good data for plotting, browse through the figures (pics/) 
@@ -471,7 +470,7 @@ if __name__ == '__main__':
 	dts = np.array([10,10])*60
 	N = 500
 	cols = [['b','k','r','g','y'],['b',None,'r','g']]
-	savepath='../fig/resting.svg'
+	savepath='../fig/resting.png'
 	plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
 
 	# plot some examples of moving fish
@@ -480,7 +479,7 @@ if __name__ == '__main__':
 	ts = np.array([125,242,46])*60
 	dts = np.array([10,10,3])*60
 	N = 500
-	savepath = '../fig/moving.svg'
+	savepath = '../fig/moving.png'
 	plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
 
 	''' plot specific examples of fish interacting: eel, JAR, and courting.'''
@@ -491,7 +490,7 @@ if __name__ == '__main__':
 	t = 769.33*60
 	dt = 1.5*60
 	N=10
-	savepath='../fig/JAR.svg'
+	savepath='../fig/JAR.png'
 	plot_interaction(path,savepath,date,t,dt,N,fmin=80,plot_x=True,plot_y=True)
 
 	# EEL (there are multiple sections of eel data, only one is plotted here):
@@ -499,7 +498,7 @@ if __name__ == '__main__':
 	cols = ['b','r','b']#['b','r','g','y','y','r'] # I defined the colors here so that the interrupted traces obtain the same color
 	t = 56*60 #943*60
 	dt = 1*60
-	savepath='../fig/eel.svg'
+	savepath='../fig/eel.png'
 	plot_interaction(path,savepath,date,t,dt,N,cols,plot_eel_distance=True)
 
 	date = '2019-10-17-19_48'
@@ -507,7 +506,7 @@ if __name__ == '__main__':
 	t = 250*60
 	dt = 30*60
 	N=100
-	savepath='../fig/courtship.svg'
+	savepath='../fig/courtship.png'
 	plot_interaction(path,savepath,date,t,dt,N,cols,plot_x=True,keys=[77675, 68636, 88933, 89455])
 
 
@@ -520,6 +519,7 @@ if __name__ == '__main__':
 	d = np.load(path+'processed_traces.npz')
 	max_var=1 # do not use data with high variance, as it is unreliable.
 	var = d['vs']
-	plot_distr(d['ts'][var<max_var],d['frs'][var<max_var],path)
-	plot_activity_ratios(d['ts'][var<max_var],d['frs'][var<max_var],path)
-	plot_movement(d['frs'][var<max_var],d['pos'][var<max_var],path)
+	savepath = '../fig/'
+	plot_distr(d['ts'][var<max_var],d['frs'][var<max_var],savepath)
+	plot_activity_ratios(d['ts'][var<max_var],d['frs'][var<max_var],savepath)
+	plot_movement(d['frs'][var<max_var],d['pos'][var<max_var],savepath)
