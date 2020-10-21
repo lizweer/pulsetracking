@@ -1,3 +1,6 @@
+'''Process pulsetracking results by deleting artefacts and gaps and smoothing.
+'''
+
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib
@@ -8,10 +11,6 @@ import pickle as pkl
 import warnings
 warnings.filterwarnings("ignore")
 
-<<<<<<< HEAD
-=======
-
->>>>>>> f286f59c9a4db372d116be4b72aeef2b3a7b17a8
 def RunningFunc(x, N, func=np.nanmedian, loc='middle'):
     """ Use sliding window of size N and run it over data x using function func.
 
@@ -306,7 +305,7 @@ def plot_traces(sts, fsts, isis, fisis, positions, et, ep, fi, file_count, dati,
             Dictionary with EOD times for each fish cluster in seconds without NaNs.
         isis : dict
             Dictionary with EOD intervals for each fish cluster in seconds with NaNs.
-        fisis : dict
+        fisis : Dictionary
             Dictionary with EOD intervals for each fish cluster in seconds without NaNs.
         positions : dict
             Dictionary with fish position coordinates.
@@ -412,6 +411,86 @@ def plot_traces(sts, fsts, isis, fisis, positions, et, ep, fi, file_count, dati,
         plt.savefig('%s%i.png'%(directory,t))
         plt.close()
 
+def process_traces(subdirs,dates,load_path):
+    """ Read EODr and fish position for all recording data, save mean and variances for data binned in seconds, 
+        and save to load_path+'processed_traces.npz'
+
+        Parameters
+        ----------
+        subdirs : list of strings
+            Subdirectories in which tracking data can be found.
+        dates : list of datetime objects
+            Datetimes of the start of each separate recording.
+        path : string
+            Path to data.
+
+        Returns 0 if successful.
+    """
+
+    N = 60*60*24*len(dates)*10
+
+    firing_rates_storage = np.zeros((N))
+    var_storage = np.zeros((N))
+    position_storage = np.zeros((N,2))
+    firing_rates_storage[:] = np.nan
+    var_storage[:] = np.nan
+    timestamps = np.zeros((N))
+    clusters = np.zeros((N))
+    pk_max = 0
+    n=0
+
+    for subdir,date in zip(subdirs,dates):
+        
+        dpk = pk_max   
+        path = load_path+'/%s/'%subdir
+        file = [i for i in os.listdir(path) if '.pkl' in i] 
+        
+        if len(file) == 0:
+            continue
+        
+        pd_ob = pkl.load(open(path+file[0],'rb'))
+        
+        positions = pd_ob['positions']
+        sts = pd_ob['sts']
+        isis = pd_ob['isis']
+        fsts = pd_ob['fsts']
+        fisis = pd_ob['fisis']
+        et = pd_ob['et']
+        ep = pd_ob['ep']
+        
+        max_time = 0
+        for k,v in sts.items():
+            max_time = max(max_time,np.max(v))
+                
+        for t in np.arange(0,np.floor(max_time)):
+
+            for i,pk in enumerate(sts.keys()):
+                if np.count_nonzero((sts[pk]>t) & (sts[pk]<(t+1))) > 1:
+
+                    p = positions[pk][:-1]
+
+                    x = sts[pk]
+                    y = isis[pk]
+                    fx = fsts[pk]
+                    fy = fisis[pk]
+
+                    firing_rates_storage[n] = np.nanmean(y[(x>t) & (x<t+1)])
+                    var_storage[n] = np.nanvar(y[(x>t) & (x<t+1)])
+                    position_storage[n] = np.nanmean(p[(x>t) & (x<t+1)],axis=0)
+                    timestamps[n] = (date + timedelta(0,int(t))).timestamp()
+                    clusters[n] = pk + dpk
+                    n=n+1
+                    pk_max = max(pk_max,pk+dpk)
+
+    firing_rates_storage = firing_rates_storage[:n]
+    var_storage = var_storage[:n]
+    position_storage = position_storage[:n]
+    timestamps = timestamps[:n]
+    clusters = clusters[:n]
+
+    np.savez(load_path+'processed_traces.npz',frs=firing_rates_storage,vs=var_storage,pos=position_storage,ts=timestamps,cl=clusters)
+    return 0
+
 
 if __name__ == '__main__':
 
@@ -424,7 +503,7 @@ if __name__ == '__main__':
 
     # go through data files and analyse them. If data already exists in save_path, continue analysis where it left off.
     subdirs = ['2019-10-17-12_36/', '2019-10-17-19_48/',  '2019-10-18-09_52/',  '2019-10-19-08_39/',  '2019-10-20-08_30/']
-    dates = [datetime(2019,10,17,13,36), datetime(2019,10,17,19,48), datetime(2019,10,18,9,52), datetime(2019,10,19,8,39), datetime(2019,10,20,8,30)]
+    dates = [datetime(2019,10,17,12,36), datetime(2019,10,17,19,48), datetime(2019,10,18,9,52), datetime(2019,10,19,8,39), datetime(2019,10,20,8,30)]
 
     for subdir,date in zip(subdirs,dates):
 
@@ -447,5 +526,16 @@ if __name__ == '__main__':
             (sts, fsts, isis, fisis), positions = process_traces(st,positions)
             plot_traces(sts, fsts, isis, fisis, positions, et, ep, 0, file_count, date, path+subdir)
             pkl.dump({'sts':sts, 'fsts':fsts, 'isis':isis, 'fisis':fisis, 'positions':positions, 'et':et, 'ep':ep}, open(path+subdir+save_name,'wb'))
+
+            # average data for analysis
+            process_traces(positions,sts,isis,fsts,fisis,et,ep, pk_max)
+
         else:
             print('plotting data exists! delete it if you wish to recreate results')
+
+    if not os.path.exists(path+'processed_traces.npz'):
+        # save all processed traces (data concatenated and averaged over 1s windows)
+        print('creating averaged traces')
+        process_traces(subdirs,dates,path)
+    else:
+        print('averaged data exists! delete it if you wish to recreate results')

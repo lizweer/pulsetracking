@@ -13,10 +13,29 @@ warnings.filterwarnings("ignore")
 # specify path to results here.
 path = '../data/results/'
 
-
 def plot_fr_and_grid(path,savepath,dates,ts,dts,colors,N):
 	''' Go through data in path, for given dates, times and durations 
 		and plot both the EODr traces and the fish positions.
+		Plot is shown and saved to savepath.
+
+		Parameters
+		----------
+		path : string
+			Path to data.
+		savepath : string
+			Path + filename to save plot to.
+		dates : list of strings
+			Subdirectory names (which in these case are named after the recording dates) to load data from.
+		ts : list of floats
+			List of timepoints to start plotting data in seconds (starting at 'date' in the list of subdirectory names).
+		dts : list of floats
+			Time duration of each snippets in seconds.
+		colors : list of lists of matplotlib colors
+			Colors for plotting traces for each plotted snippet. If some traces are not continuously tracked, 
+			you can modify this list to have different traces appear in the same color.
+		N : int
+			Minimum amount of samples in a trace for plotting it.
+
 	'''
 
 	fig = plt.figure(figsize=(10*0.8,len(dates)*2*0.8))
@@ -89,106 +108,168 @@ def plot_fr_and_grid(path,savepath,dates,ts,dts,colors,N):
 	plt.show()
 
 def plot_interaction(path, savepath, date, t, dt, N, cols=[], plot_x=False, keys=None, plot_y=False, plot_eel_distance=False, fmin=0, fmax=130):
-    """ Plot specific interactions. Based on tracking quality and fish movement, 
-    	plot either relative or absolute fish coordinates on timeline. If fish tracking is bad, 
-    	keep cols empty to not assign different colors for different fish. For small tracking interuptions, 
-    	adapt cols so that separate traces are plot in the same color.
-    	If you only want to plot specific fish, check their cluster key (for this check out the pkl object that is loaded), 
-    	and define in keys.
+	''' Plot specific interactions. Based on tracking quality and fish movement, 
+	plot either relative or absolute fish coordinates on timeline. If fish tracking is bad, 
+	keep cols empty to not assign different colors for different fish. For small tracking interuptions, 
+	adapt cols so that separate traces are plot in the same color.
+	If you only want to plot specific fish, check their cluster key (for this check out the pkl object that is loaded), 
+	and define in keys.
+	Plot is shown and saved to savepath.
 
-    """
-    fig, (ax1,ax2) = plt.subplots(nrows=2, sharex=True,figsize=(8,3))    
-    file = [i for i in os.listdir(path+date+'/') if '.pkl' in i]    
-    if len(file) == 0:
-        print('file not found')
-        return 0
+	Parameters
+	----------
+	path : string
+		Path to data.
+	savepath : string
+		Path + filename to save plot to.
+	date : string
+		Subdirectory name (which in this case is named after the recording dates) to load data from.
+	t : float
+		Timepoint to start plotting data in seconds (starting at 'date' in the list of subdirectory names).
+	dt : float
+		Time duration of the snippet in seconds.
+	N : int
+		Minimum amount of samples in a trace for plotting it.
+	cols : list of matplotlib colors
+		Colors for plotting traces. If some traces are not continuously tracked, 
+		you can modify this list to have different traces appear in the same color.
+		If cols is empty, separate fish are plotted in the same colors.
+	keys : list of ints (optional)
+		If you only want to plot certain traces with specific keys, specify them here.
+		If keys is empty, all traces within the snippet are plotted.
+		Defaults to [].
+	plot_x : bool (optional)
+		Set to True to plot x coordinates of fish.
+		Defaults to False.
+	plot_y : bool (optional)
+		Set to True to plot y coordinates of fish.
+		Defaults to False.
+	plot_eel_distance : bool (optional)
+		Set to True to plot the distance of each fish to the eel.
+		Defaults to False.
+	fmin : float (optional)
+		Minimum value for EODr in Hz.
+		Defaults to 0.
+	fmax : float (optional)
+		Maximum value for EODr in Hz.
+		Defaults to 130.
+	'''
 
-    pd_ob = pickle.load(open(path+date+'/'+file[0],'rb'))
-    positions = pd_ob['positions']
-    sts = pd_ob['sts']
-    isis = pd_ob['isis']
-    fsts = pd_ob['fsts']
-    fisis = pd_ob['fisis']
-    et = pd_ob['et']
-    ep = pd_ob['ep']
+	fig, (ax1,ax2) = plt.subplots(nrows=2, sharex=True,figsize=(8,3))    
+	file = [i for i in os.listdir(path+date+'/') if '.pkl' in i]    
+	if len(file) == 0:
+	    print('file not found')
+	    return 0
 
-    i=0
-    if keys == None:
-    	keys = sts.keys()
-    for j,pk in enumerate(keys):
-        if np.count_nonzero((sts[pk]>t) & (sts[pk]<(t+dt))) > N:
-            p = positions[pk][:-1]
+	pd_ob = pickle.load(open(path+date+'/'+file[0],'rb'))
+	positions = pd_ob['positions']
+	sts = pd_ob['sts']
+	isis = pd_ob['isis']
+	fsts = pd_ob['fsts']
+	fisis = pd_ob['fisis']
+	et = pd_ob['et']
+	ep = pd_ob['ep']
 
-            y = isis[pk]
-            x = sts[pk][((y>fmin)&(y<fmax))|np.isnan(y)]
+	i=0
+	if keys == None:
+		keys = sts.keys()
+	for j,pk in enumerate(keys):
+	    if np.count_nonzero((sts[pk]>t) & (sts[pk]<(t+dt))) > N:
+	        p = positions[pk][:-1]
 
-            fy = fisis[pk]
-            fx = fsts[pk][((fy>fmin)&(fy<fmax))|np.isnan(fy)]
+	        y = isis[pk]
+	        x = sts[pk][((y>fmin)&(y<fmax))|np.isnan(y)]
 
-            p = p[((y>fmin)&(y<fmax))|np.isnan(y)]
-            y = y[((y>fmin)&(y<fmax))|np.isnan(y)]
-            fy = fy[((fy>fmin)&(fy<fmax))|np.isnan(fy)]
+	        fy = fisis[pk]
+	        fx = fsts[pk][((fy>fmin)&(fy<fmax))|np.isnan(fy)]
 
-            if plot_x:
-            	if len(cols) == 0:
-            		col = 'b'
-            	else:
-            		col = cols[i%len(cols)]
+	        p = p[((y>fmin)&(y<fmax))|np.isnan(y)]
+	        y = y[((y>fmin)&(y<fmax))|np.isnan(y)]
+	        fy = fy[((fy>fmin)&(fy<fmax))|np.isnan(fy)]
 
-            	ax2.plot(x[(x>t) & (x<t+dt) & (~np.isnan(y))]-t, p[(x>t) & (x<(t+dt)) & (~np.isnan(y)),1]/2,c=col)
+	        if plot_x:
+	        	if len(cols) == 0:
+	        		col = 'b'
+	        	else:
+	        		col = cols[i%len(cols)]
 
-            if plot_y:
-            	if len(cols) == 0:
-            		col = 'r'
-            	else:
-            		col = cols[i%len(cols)]
-            	ax2.plot(x[(x>t) & (x<t+dt) & (~np.isnan(y))]-t, p[(x>t) & (x<(t+dt)) & (~np.isnan(y)),0]/2,c=col)
+	        	ax2.plot(x[(x>t) & (x<t+dt) & (~np.isnan(y))]-t, p[(x>t) & (x<(t+dt)) & (~np.isnan(y)),1]/2,c=col)
 
-            if plot_eel_distance:
-            	de = np.linalg.norm(ep[(et>t) & (et<(t+dt))]/2 - np.mean(p[(x>t) & (x<(t+dt)) & (~np.isnan(y))],axis=0)/2,axis=1)                
-            	ax2.plot(et[(et>t) & (et<t+dt)]-t, de, '--', color=cols[i%len(cols)])
+	        if plot_y:
+	        	if len(cols) == 0:
+	        		col = 'r'
+	        	else:
+	        		col = cols[i%len(cols)]
+	        	ax2.plot(x[(x>t) & (x<t+dt) & (~np.isnan(y))]-t, p[(x>t) & (x<(t+dt)) & (~np.isnan(y)),0]/2,c=col)
 
-            if len(cols) == 0:
-            	col = 'k'
-            	alpha=0.5
-            else:
-            	col = cols[i%len(cols)]
-            	alpha=1
+	        if plot_eel_distance:
+	        	de = np.linalg.norm(ep[(et>t) & (et<(t+dt))]/2 - np.mean(p[(x>t) & (x<(t+dt)) & (~np.isnan(y))],axis=0)/2,axis=1)                
+	        	ax2.plot(et[(et>t) & (et<t+dt)]-t, de, '--', color=cols[i%len(cols)])
 
-            ax1.plot(x[(x>t) & (x<t+dt)]-t,y[(x>t) & (x<t+dt)],color=col,rasterized=False,linewidth=2,label=pk,alpha=alpha)
-            ax1.plot(fx[(fx>t) & (fx<t+dt)]-t,fy[(fx>t) & (fx<t+dt)],color=col,rasterized=False,linewidth=2,label=pk,alpha=alpha/2)
+	        if len(cols) == 0:
+	        	col = 'k'
+	        	alpha=0.5
+	        else:
+	        	col = cols[i%len(cols)]
+	        	alpha=1
 
-            i=i+1
-    
-    # plot eel
-    if len(et) > 0 and len(et[(et>t) & (et<t+dt)]) > 0:
-        for xc in et[(et>t) & (et<t+dt)]:
-            ax1.axvline((xc-t),0.05,0.95,color='k',alpha=0.5)
+	        ax1.plot(x[(x>t) & (x<t+dt)]-t,y[(x>t) & (x<t+dt)],color=col,rasterized=False,linewidth=2,label=pk,alpha=alpha)
+	        ax1.plot(fx[(fx>t) & (fx<t+dt)]-t,fy[(fx>t) & (fx<t+dt)],color=col,rasterized=False,linewidth=2,label=pk,alpha=alpha/2)
 
-    ax2.set_xlabel('Time [s]',fontsize=10)
-    ax1.set_ylabel('EOD rate [Hz]',fontsize=10)
-    if plot_y and plot_x:
+	        i=i+1
+
+	# plot eel
+	if len(et) > 0 and len(et[(et>t) & (et<t+dt)]) > 0:
+	    for xc in et[(et>t) & (et<t+dt)]:
+	        ax1.axvline((xc-t),0.05,0.95,color='k',alpha=0.5,zorder=-999)
+
+	ax2.set_xlabel('Time [s]',fontsize=10)
+	ax1.set_ylabel('EOD rate [Hz]',fontsize=10)
+	if plot_y and plot_x:
 	    ax2.set_ylabel('Coordinates [m]',fontsize=10)
-    elif plot_x:
+	elif plot_x:
 	    ax2.set_ylabel('X coordinates [m]',fontsize=10)
-    elif plot_eel_distance:
+	elif plot_eel_distance:
 	    ax2.set_ylabel('DtE [m]',fontsize=10)
-    ax1.set_xlim([0,dt])
-    ax1.spines['top'].set_visible(False)
-    ax1.spines['right'].set_visible(False)
-    ax2.spines['top'].set_visible(False)
-    ax2.spines['right'].set_visible(False)
+	ax1.set_xlim([0,dt])
+	ax1.spines['top'].set_visible(False)
+	ax1.spines['right'].set_visible(False)
+	ax2.spines['top'].set_visible(False)
+	ax2.spines['right'].set_visible(False)
 
-    if plot_x and plot_y:
-    	custom_lines = [lines.Line2D([0], [0], color='r', lw=1),
-                lines.Line2D([0], [0], color='b', lw=1)]
-    	ax2.legend(custom_lines,['x','y'])
+	if plot_x and plot_y:
+		custom_lines = [lines.Line2D([0], [0], color='r', lw=1),
+	            lines.Line2D([0], [0], color='b', lw=1)]
+		ax2.legend(custom_lines,['x','y'])
 
-    plt.tight_layout()
-    plt.savefig(savepath,dpi=300)
-    plt.show()
+	plt.tight_layout()
+	plt.savefig(savepath,dpi=300)
+	plt.show()
 
-def plot_distr(t,firing_rates,savepath):
+def plot_distr(t,firing_rates,savepath, cycle=600, dHz=1,fmin=0,fmax=125):
+	""" Plot the logarithm of firing rate distributions over time.
+	Figure is shown and saved to savepath.
+
+	Parameters
+	----------
+	t : numpy array
+		Timestamps for each recorded firing rate.
+	firing_rates : numpy array
+		Firing rates
+	savepath : string
+		Path to save data to.
+	cycle : float
+		Period for binning temporal data in seconds.
+		Defaults to 600.
+	dHz : float
+		Period for binning frequency data in Hz.
+		Defaults to 1.
+	fmin : float
+		Minimum frequency for binning frequency data in Hz.
+	fmax : float
+		Maximum frequency for binning frequency data in Hz.
+
+	"""
 	fig, axs = plt.subplots(2,2,figsize=(8,2.4),gridspec_kw={'height_ratios':[1,3],'width_ratios': [3, 1],'wspace':0.05,'hspace':0.1})
 	fig.autofmt_xdate()
 
@@ -198,10 +279,8 @@ def plot_distr(t,firing_rates,savepath):
 
 	axs[0,1].axis('off')
 
-	cycle = 600 #sec
-
 	timebins = np.arange(np.min(t),np.max(t),cycle)
-	freqbins = np.arange(0,125)
+	freqbins = np.arange(fmin,fmax,dHz)
 
 	axf.hist(firing_rates,bins=freqbins, orientation='horizontal',alpha=0.5)
 	axc.hist(t,bins=timebins,alpha=0.5)
@@ -237,7 +316,31 @@ def plot_distr(t,firing_rates,savepath):
 	plt.savefig(savepath+'freq_days.svg',dpi=300)
 	plt.show()
 
-def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65):
+def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65,cycle=600,fmin=0,fmax=125):
+	""" Plot the logarithm of firing rate distributions collapsed to a 24hr period. 
+	Firing rates are separated by boundary points c1 and c2.
+	Ratios of frequencies separated by boundary points for each timestep 
+	is plot underneath the collapsed distribution.
+
+	Parameters
+	----------
+	t : numpy array	
+		Timestamps.
+	firing_rates : numpy array
+		Firing rates for each timestamp in t.
+	savepath : string
+		Path to save plot to.
+	c1 : float
+		Boundary point 1, for separating EODr activity phases.
+	c2 : float
+		Boundary point 2, for separating EODr activity phases.
+	cycle : float
+		Period for binning temporal data in seconds.
+	fmin : float
+		Minimum frequency for binning frequency data in Hz.
+	fmax : float
+		Maximum frequency for binning frequency data in Hz.
+	"""
 	cycle = 600 #sec
 
 	fig, ax = plt.subplots(2,2,sharex=True,gridspec_kw={'width_ratios':[10,1]},figsize=(8,4))
@@ -246,7 +349,7 @@ def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65):
 	ax[1,1].axis('off')
 
 	timebins = np.arange(0,3600*24,cycle)
-	freqbins = np.arange(0,125)
+	freqbins = np.arange(fmin,fmax)
 
 	H, xedges, yedges = np.histogram2d(t%(3600*24),firing_rates,bins=[timebins,freqbins])
 	H = np.roll(H.T,int(len(timebins)/2),axis=1)
@@ -292,6 +395,21 @@ def plot_activity_ratios(t, firing_rates,savepath,c1=40,c2=65):
 	plt.show()
 
 def plot_movement(firing_rates,positions,savepath,c1=40,c2=65):
+	""" Plot location distribution of fish with different firing rates (separated by c1 and c2).
+
+	Parameters
+	----------
+	firing_rates : numpy array
+		EODr.
+	positions : 2D numpy array
+		Fish positions
+	savepath : string
+		Path to save figure to.
+	c1 : float
+		EODr boundary 1 in Hz.
+	c2 : float
+		EODr boundary 2 in Hz.
+	"""
 	binsize = 0.1
 	twodbins = [np.arange(0,7+binsize,binsize),np.arange(0,3+binsize,binsize)]
 	fig,ax = plt.subplots(1,3,figsize=(10*0.8,3*0.8))
@@ -341,65 +459,67 @@ def plot_movement(firing_rates,positions,savepath,c1=40,c2=65):
 	plt.savefig(savepath+'movement.svg')
 	plt.show()
 
-# identify sections of data with nice traces for resting fish here.
-# for identifying good data for plotting, browse through the figures (pics/) 
-# in each of the results folders
+if __name__ == '__main__':
 
-# plot some examples of resting fish
-dates = ['2019-10-17-12_36','2019-10-17-19_48']
-ts = np.array([0,688])*60
-dts = np.array([10,10])*60
-N = 500
-cols = [['b','k','r','g','y'],['b',None,'r','g']]
-savepath='../fig/resting.svg'
-plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
+	# identify sections of data with nice traces for resting fish here.
+	# for identifying good data for plotting, browse through the figures (pics/) 
+	# in each of the results folders
 
-# plot some examples of moving fish
-dates = ['2019-10-17-19_48','2019-10-17-19_48','2019-10-17-19_48']
-cols = [['k',None,None,'r'],['b','k','r','g'],['g','b','k']]
-ts = np.array([125,242,46])*60
-dts = np.array([10,10,3])*60
-N = 500
-savepath = '../fig/moving.svg'
-plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
+	# plot some examples of resting fish
+	dates = ['2019-10-17-12_36','2019-10-17-19_48']
+	ts = np.array([0,688])*60
+	dts = np.array([10,10])*60
+	N = 500
+	cols = [['b','k','r','g','y'],['b',None,'r','g']]
+	savepath='../fig/resting.svg'
+	plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
 
-# plot specific examples of fish interacting: eel, JAR, and courting.
+	# plot some examples of moving fish
+	dates = ['2019-10-17-19_48','2019-10-17-19_48','2019-10-17-19_48']
+	cols = [['k',None,None,'r'],['b','k','r','g'],['g','b','k']]
+	ts = np.array([125,242,46])*60
+	dts = np.array([10,10,3])*60
+	N = 500
+	savepath = '../fig/moving.svg'
+	plot_fr_and_grid(path,savepath,dates,ts,dts,cols,N)
 
-# JAR. Because the fish are so close together they are not correctly tracked.
-# thats why I do not define colors here and plot each variable in the same color.
-date = '2019-10-20-08_30'
-t = 769.33*60
-dt = 1.5*60
-N=10
-savepath='../fig/JAR.svg'
-plot_interaction(path,savepath,date,t,dt,N,fmin=80,plot_x=True,plot_y=True)
+	''' plot specific examples of fish interacting: eel, JAR, and courting.'''
 
-# EEL:
-date = '2019-10-18-09_52'
-cols = ['b','r','g','y','y','r'] # I defined the colors here so that the interrupted traces obtain the same color
-t = 943*60
-dt = 1*60
-savepath='../fig/eel.svg'
-plot_interaction(path,savepath,date,t,dt,N,cols,plot_eel_distance=True)
+	# JAR. Because the fish are so close together they are not correctly tracked.
+	# thats why I do not define colors here and plot each variable in the same color.
+	date = '2019-10-20-08_30'
+	t = 769.33*60
+	dt = 1.5*60
+	N=10
+	savepath='../fig/JAR.svg'
+	plot_interaction(path,savepath,date,t,dt,N,fmin=80,plot_x=True,plot_y=True)
 
-date = '2019-10-17-19_48'
-cols = ['b','r','b','r']
-t = 250*60
-dt = 30*60
-N=100
-savepath='../fig/courtship.svg'
-plot_interaction(path,savepath,date,t,dt,N,cols,plot_x=True,keys=[77675, 68636, 88933, 89455])
+	# EEL (there are multiple sections of eel data, only one is plotted here):
+	date = '2019-10-17-19_48' #'2019-10-18-09_52'
+	cols = ['b','r','b']#['b','r','g','y','y','r'] # I defined the colors here so that the interrupted traces obtain the same color
+	t = 56*60 #943*60
+	dt = 1*60
+	savepath='../fig/eel.svg'
+	plot_interaction(path,savepath,date,t,dt,N,cols,plot_eel_distance=True)
+
+	date = '2019-10-17-19_48'
+	cols = ['b','r','b','r']
+	t = 250*60
+	dt = 30*60
+	N=100
+	savepath='../fig/courtship.svg'
+	plot_interaction(path,savepath,date,t,dt,N,cols,plot_x=True,keys=[77675, 68636, 88933, 89455])
 
 
-# now for plotting analysis results
-# plot 1: distribution of fr and fish over time.
-# plot 2: stats on fish and freqs per daytime
-# plot 3: position vs EODr
+	# now for plotting analysis results
+	# plot 1: distribution of fr and fish over time.
+	# plot 2: stats on fish and freqs per daytime
+	# plot 3: position vs EODr
 
-# load data
-d = np.load(path+'processed_traces.npz')
-max_var=1
-var = d['vs']
-plot_distr(d['ts'][var<max_var],d['frs'][var<max_var],savepath)
-plot_activity_ratios(d['ts'][var<max_var],d['frs'][var<max_var],savepath)
-plot_movement(d['frs'][var<max_var],d['pos'][var<max_var],savepath)
+	# load data
+	d = np.load(path+'processed_traces.npz')
+	max_var=1 # do not use data with high variance, as it is unreliable.
+	var = d['vs']
+	plot_distr(d['ts'][var<max_var],d['frs'][var<max_var],path)
+	plot_activity_ratios(d['ts'][var<max_var],d['frs'][var<max_var],path)
+	plot_movement(d['frs'][var<max_var],d['pos'][var<max_var],path)

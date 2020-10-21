@@ -1,3 +1,5 @@
+'''Perform EOD source separation on raw data of multichannel recordings and export tracked fish EOD rates and positions.
+'''
 import thunderfish.dataloader as dl
 import thunderfish.pulses as lp
 from thunderfish.eventdetection import detect_peaks
