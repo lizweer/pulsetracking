@@ -458,6 +458,7 @@ def plot_movement(firing_rates,positions,savepath,c1=40,c2=65):
 
 if __name__ == '__main__':
 
+	# specity path to data here.
 	path = '../data/results/'
 
 	# identify sections of data with nice traces for resting fish here.
